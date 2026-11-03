@@ -26,11 +26,14 @@ import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.SeekBar;
 import android.widget.ScrollView;
 import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
+import android.widget.AdapterView;
 
 import java.text.SimpleDateFormat;
 import java.util.Calendar;
@@ -41,6 +44,8 @@ import java.util.Locale;
 public class MainActivity extends Activity {
     public static final String EXTRA_QUICK_ADD = "quick_add";
     private static final int REQUEST_NOTIFICATIONS = 2001;
+    private static final int REQUEST_MICROPHONE = 2002;
+    private static final int REQUEST_CUSTOM_SKIN = 2003;
     private static final int ORANGE = Color.rgb(255, 138, 52);
     private static final int CREAM = Color.rgb(255, 248, 237);
     private static final int TEXT = Color.rgb(61, 49, 43);
@@ -49,6 +54,9 @@ public class MainActivity extends Activity {
     private LinearLayout listContainer;
     private TextView permissionStatus;
     private Button petToggleButton;
+    private Button voiceToggleButton;
+    private ImageView skinPreview;
+    private TextView skinDescription;
     private boolean quickAddHandled;
 
     @Override
@@ -73,6 +81,7 @@ public class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         updatePermissionStatus();
+        updateVoiceButton();
         refreshList();
     }
 
@@ -80,6 +89,37 @@ public class MainActivity extends Activity {
     protected void onDestroy() {
         db.close();
         super.onDestroy();
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQUEST_CUSTOM_SKIN || resultCode != RESULT_OK || data == null) return;
+        Uri uri = data.getData();
+        if (uri == null) return;
+        try {
+            getContentResolver().takePersistableUriPermission(
+                    uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        } catch (SecurityException ignored) {}
+        getSharedPreferences("pet_settings", MODE_PRIVATE).edit()
+                .putString("custom_skin_uri", uri.toString())
+                .putInt("selected_skin", -1)
+                .apply();
+        showSkinPreview(-1);
+        refreshRunningPet();
+        toast("自定义形象已应用");
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQUEST_MICROPHONE) {
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                startVoiceControl();
+            } else {
+                toast("需要麦克风权限才能使用语音控制");
+            }
+        }
     }
 
     private View buildScreen() {
@@ -112,6 +152,9 @@ public class MainActivity extends Activity {
         statusCard.addView(petToggleButton, matchWrap());
         root.addView(statusCard, matchWrap());
 
+        root.addView(sectionTitle("形象与个性化"));
+        root.addView(buildSkinCard(), matchWrap());
+
         root.addView(sectionTitle("快速记录"));
         LinearLayout actions = new LinearLayout(this);
         actions.setOrientation(LinearLayout.HORIZONTAL);
@@ -121,6 +164,9 @@ public class MainActivity extends Activity {
         actions.addView(spaceHorizontal(10));
         actions.addView(note, weighted());
         root.addView(actions, matchWrap());
+
+        root.addView(sectionTitle("语音控制"));
+        root.addView(buildVoiceCard(), matchWrap());
 
         root.addView(sectionTitle("待办与笔记"));
         listContainer = vertical();
@@ -154,6 +200,156 @@ public class MainActivity extends Activity {
         root.addView(settings, matchWrap());
 
         return scroll;
+    }
+
+    private View buildSkinCard() {
+        SharedPreferences prefs = getSharedPreferences("pet_settings", MODE_PRIVATE);
+        LinearLayout layout = card();
+        skinPreview = new ImageView(this);
+        skinPreview.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        skinPreview.setAdjustViewBounds(true);
+        layout.addView(skinPreview, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(180)));
+
+        skinDescription = text("", 13, Color.rgb(110, 94, 86), false);
+        skinDescription.setGravity(Gravity.CENTER);
+        layout.addView(skinDescription);
+        layout.addView(space(8));
+
+        Spinner skinSpinner = new Spinner(this);
+        String[] builtInNames = SkinCatalog.names();
+        boolean hasCustom = !prefs.getString("custom_skin_uri", "").isEmpty();
+        String[] displayNames;
+        if (hasCustom) {
+            displayNames = new String[builtInNames.length + 1];
+            System.arraycopy(builtInNames, 0, displayNames, 0, builtInNames.length);
+            displayNames[builtInNames.length] = "自定义形象";
+        } else {
+            displayNames = builtInNames;
+        }
+        skinSpinner.setAdapter(new ArrayAdapter<>(this,
+                android.R.layout.simple_spinner_dropdown_item, displayNames));
+        int selected = prefs.getInt("selected_skin", 1);
+        skinSpinner.setSelection(selected == -1 && hasCustom
+                ? builtInNames.length : SkinCatalog.safeIndex(selected));
+        showSkinPreview(selected);
+        skinSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                int selectedValue = position == SkinCatalog.BUILT_INS.length ? -1 : position;
+                prefs.edit().putInt("selected_skin", selectedValue).apply();
+                showSkinPreview(selectedValue);
+                refreshRunningPet();
+            }
+
+            @Override public void onNothingSelected(AdapterView<?> parent) {}
+        });
+        layout.addView(skinSpinner, matchWrap());
+        layout.addView(space(8));
+
+        Button importButton = outlineButton("导入自己的透明 PNG / 图片", v -> openCustomSkinPicker());
+        layout.addView(importButton, matchWrap());
+        layout.addView(space(12));
+
+        TextView sizeLabel = text("桌宠大小", 14, TEXT, true);
+        layout.addView(sizeLabel);
+        SeekBar sizeBar = new SeekBar(this);
+        sizeBar.setMin(70);
+        sizeBar.setMax(150);
+        sizeBar.setProgress(prefs.getInt("pet_size_percent", 100));
+        TextView sizeValue = text(sizeBar.getProgress() + "%", 12,
+                Color.rgb(122, 101, 90), false);
+        sizeValue.setGravity(Gravity.CENTER_HORIZONTAL);
+        sizeBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                sizeValue.setText(String.format(Locale.CHINA, "%d%%", progress));
+            }
+
+            @Override public void onStartTrackingTouch(SeekBar seekBar) {}
+
+            @Override
+            public void onStopTrackingTouch(SeekBar seekBar) {
+                prefs.edit().putInt("pet_size_percent", seekBar.getProgress()).apply();
+                refreshRunningPet();
+            }
+        });
+        layout.addView(sizeBar, matchWrap());
+        layout.addView(sizeValue);
+        return layout;
+    }
+
+    private View buildVoiceCard() {
+        LinearLayout layout = card();
+        layout.addView(text("先说“你好费雾”，再说命令", 16, TEXT, true));
+        layout.addView(space(5));
+        layout.addView(text("示例：你好费雾，提醒我明天下午三点交水费\n" +
+                        "示例：你好费雾，记一下周末买猫粮\n" +
+                        "示例：你好费雾，今天有什么待办",
+                13, Color.rgb(105, 90, 82), false));
+        layout.addView(space(12));
+        voiceToggleButton = primaryButton("开启持续语音唤醒", v -> toggleVoiceControl());
+        layout.addView(voiceToggleButton, matchWrap());
+        layout.addView(space(7));
+        layout.addView(text("开启后通知栏会显示语音监听状态；手机重启后需要手动重新开启。",
+                12, Color.rgb(135, 116, 105), false));
+        return layout;
+    }
+
+    private void showSkinPreview(int selected) {
+        if (skinPreview == null || skinDescription == null) return;
+        SharedPreferences prefs = getSharedPreferences("pet_settings", MODE_PRIVATE);
+        if (selected == -1) {
+            String value = prefs.getString("custom_skin_uri", "");
+            if (!value.isEmpty()) skinPreview.setImageURI(Uri.parse(value));
+            skinDescription.setText("当前使用：自定义形象");
+            return;
+        }
+        int index = SkinCatalog.safeIndex(selected);
+        SkinCatalog.Skin skin = SkinCatalog.BUILT_INS[index];
+        skinPreview.setImageResource(skin.resourceId);
+        skinDescription.setText(String.format(Locale.CHINA, "%s · %s", skin.name, skin.description));
+    }
+
+    private void openCustomSkinPicker() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION |
+                Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+        intent.setType("image/*");
+        startActivityForResult(intent, REQUEST_CUSTOM_SKIN);
+    }
+
+    private void refreshRunningPet() {
+        if (!PetOverlayService.isRunning()) return;
+        startService(new Intent(this, PetOverlayService.class)
+                .setAction(PetOverlayService.ACTION_REFRESH_SKIN));
+    }
+
+    private void toggleVoiceControl() {
+        if (VoiceControlService.isRunning()) {
+            startService(new Intent(this, VoiceControlService.class)
+                    .setAction(VoiceControlService.ACTION_STOP));
+            updateVoiceButton();
+            return;
+        }
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, REQUEST_MICROPHONE);
+            return;
+        }
+        startVoiceControl();
+    }
+
+    private void startVoiceControl() {
+        startForegroundService(new Intent(this, VoiceControlService.class));
+        voiceToggleButton.setText("关闭持续语音唤醒");
+        toast("正在加载离线语音模型，加载后请说：你好费雾");
+    }
+
+    private void updateVoiceButton() {
+        if (voiceToggleButton == null) return;
+        voiceToggleButton.setText(VoiceControlService.isRunning()
+                ? "关闭持续语音唤醒" : "开启持续语音唤醒");
     }
 
     private void togglePet() {
@@ -352,9 +548,12 @@ public class MainActivity extends Activity {
         boolean overlay = Settings.canDrawOverlays(this);
         boolean notifications = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
                 checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED;
-        permissionStatus.setText(String.format(Locale.CHINA, "悬浮窗：%s　通知：%s%s",
+        boolean microphone = checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
+                PackageManager.PERMISSION_GRANTED;
+        permissionStatus.setText(String.format(Locale.CHINA, "悬浮窗：%s　通知：%s　麦克风：%s%s",
                 overlay ? "已允许" : "未允许",
                 notifications ? "已允许" : "未允许",
+                microphone ? "已允许" : "未允许",
                 isXiaomi() ? "\n已识别为红米/小米设备，将提供专用后台设置入口。" : ""));
         if (overlay) petToggleButton.setText("开启 / 重新显示桌宠");
     }

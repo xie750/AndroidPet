@@ -1,9 +1,72 @@
-*.iml
-.gradle/
+# ================================
+# Android Studio / IntelliJ 本地文件
+# ================================
 .idea/
-local.properties
+*.iml
+*.ipr
+*.iws
+
+# ================================
+# Gradle 缓存与构建产物
+# ================================
+.gradle/
 build/
+**/build/
 captures/
 .externalNativeBuild/
 .cxx/
-app/build/
+
+# ================================
+# 本机 SDK、环境变量与私有配置
+# ================================
+local.properties
+.env
+.env.*
+!.env.example
+keystore.properties
+signing.properties
+secrets.properties
+google-services.json
+
+# ================================
+# 签名文件和证书（禁止提交私钥）
+# ================================
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.pem
+*.key
+
+# ================================
+# Android 安装包 / 发布产物
+# ================================
+*.apk
+*.aab
+*.apks
+
+# ================================
+# 日志、临时文本与系统文件
+# ================================
+*.log
+*.txt
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ================================
+# 性能分析、测试覆盖率与本地数据库
+# ================================
+*.hprof
+*.prof
+*.trace
+*.ec
+*.exec
+*.db
+*.db-shm
+*.db-wal

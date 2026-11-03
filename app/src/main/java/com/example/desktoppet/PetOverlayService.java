@@ -17,6 +17,7 @@ import android.view.WindowManager;
 
 public class PetOverlayService extends Service {
     static final String ACTION_STOP = "com.example.desktoppet.STOP_PET";
+    static final String ACTION_REFRESH_SKIN = "com.example.desktoppet.REFRESH_SKIN";
     private static final String CHANNEL_ID = "pet_running";
     private static final int FOREGROUND_ID = 42;
 
@@ -46,6 +47,7 @@ public class PetOverlayService extends Service {
             return START_NOT_STICKY;
         }
         if (petView == null && Settings.canDrawOverlays(this)) showPet();
+        if (intent != null && ACTION_REFRESH_SKIN.equals(intent.getAction())) refreshSkinAndSize();
         return START_STICKY;
     }
 
@@ -67,7 +69,9 @@ public class PetOverlayService extends Service {
     private void showPet() {
         windowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
         if (windowManager == null) return;
-        int size = dp(190);
+        int percent = getSharedPreferences("pet_settings", MODE_PRIVATE)
+                .getInt("pet_size_percent", 100);
+        int size = dp(190) * percent / 100;
         params = new WindowManager.LayoutParams(
                 size,
                 size,
@@ -82,11 +86,28 @@ public class PetOverlayService extends Service {
             if (petView == null) return;
             int screenW = getResources().getDisplayMetrics().widthPixels;
             int screenH = getResources().getDisplayMetrics().heightPixels;
-            params.x = Math.max(-size / 3, Math.min(screenW - size * 2 / 3, params.x + dx));
-            params.y = Math.max(0, Math.min(screenH - size / 2, params.y + dy));
+            int currentSize = params.width;
+            params.x = Math.max(-currentSize / 3,
+                    Math.min(screenW - currentSize * 2 / 3, params.x + dx));
+            params.y = Math.max(0, Math.min(screenH - currentSize / 2, params.y + dy));
             try { windowManager.updateViewLayout(petView, params); } catch (RuntimeException ignored) {}
         });
-        windowManager.addView(petView, params);
+        try {
+            windowManager.addView(petView, params);
+        } catch (RuntimeException exception) {
+            stopSelf();
+        }
+    }
+
+    private void refreshSkinAndSize() {
+        if (petView == null || params == null || windowManager == null) return;
+        int percent = getSharedPreferences("pet_settings", MODE_PRIVATE)
+                .getInt("pet_size_percent", 100);
+        int size = dp(190) * percent / 100;
+        params.width = size;
+        params.height = size;
+        petView.reloadSkin();
+        try { windowManager.updateViewLayout(petView, params); } catch (RuntimeException ignored) {}
     }
 
     static void showReminderIfRunning(String message) {
@@ -94,6 +115,17 @@ public class PetOverlayService extends Service {
         if (service != null && service.petView != null) {
             service.petView.post(() -> service.petView.showMessage("该做：" + message));
         }
+    }
+
+    static void showAssistantMessage(String message, PetView.Action action) {
+        PetOverlayService service = runningInstance;
+        if (service != null && service.petView != null) {
+            service.petView.post(() -> service.petView.showMessage(message, action, 5000L));
+        }
+    }
+
+    static boolean isRunning() {
+        return runningInstance != null;
     }
 
     private Notification createNotification() {
