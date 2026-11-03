@@ -127,6 +127,13 @@ public class PetOverlayService extends Service {
         }
     }
 
+    public static void setAssistantSpeaking(boolean speaking) {
+        PetOverlayService service = runningInstance;
+        if (service != null && service.petView != null) {
+            service.petView.post(() -> service.petView.setSpeaking(speaking));
+        }
+    }
+
     public static boolean isRunning() {
         return runningInstance != null;
     }

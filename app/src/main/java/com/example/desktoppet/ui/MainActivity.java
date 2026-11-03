@@ -91,6 +91,12 @@ public class MainActivity extends Activity {
         updatePermissionStatus();
         updateVoiceButton();
         refreshList();
+        SharedPreferences prefs = getSharedPreferences("pet_settings", MODE_PRIVATE);
+        if (PetOverlayService.isRunning() && prefs.getBoolean("voice_enabled", true) &&
+                !VoiceControlService.isRunning() &&
+                checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            startVoiceControl(false);
+        }
     }
 
     @Override
@@ -123,7 +129,9 @@ public class MainActivity extends Activity {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == REQUEST_MICROPHONE) {
             if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                startVoiceControl();
+                getSharedPreferences("pet_settings", MODE_PRIVATE).edit()
+                        .putBoolean("voice_enabled", true).apply();
+                startVoiceControl(true);
             } else {
                 toast("需要麦克风权限才能使用语音控制");
             }
@@ -288,18 +296,87 @@ public class MainActivity extends Activity {
     }
 
     private View buildVoiceCard() {
+        SharedPreferences prefs = getSharedPreferences("pet_settings", MODE_PRIVATE);
         LinearLayout layout = card();
-        layout.addView(text("先说“你好费雾”，再说命令", 16, TEXT, true));
+        layout.addView(text("桌宠启动后自动听候唤醒", 16, TEXT, true));
         layout.addView(space(5));
         layout.addView(text("示例：你好费雾，提醒我明天下午三点交水费\n" +
                         "示例：你好费雾，记一下周末买猫粮\n" +
-                        "示例：你好费雾，今天有什么待办",
+                        "示例：你好费雾，今天有什么待办\n" +
+                        "也可以问时间、问它会做什么，或换一种自然说法。",
                 13, Color.rgb(105, 90, 82), false));
         layout.addView(space(12));
         voiceToggleButton = primaryButton("开启持续语音唤醒", v -> toggleVoiceControl());
         layout.addView(voiceToggleButton, matchWrap());
+        layout.addView(space(10));
+        layout.addView(text("回复音色", 14, TEXT, true));
+        Spinner voiceStyle = new Spinner(this);
+        String[] styleLabels = {"自然（自动选择高质量中文声线）", "温柔舒缓", "活泼明亮",
+                "纯离线", "跟随系统默认"};
+        String[] styleValues = {"natural", "gentle", "bright", "offline", "system"};
+        voiceStyle.setAdapter(new ArrayAdapter<>(this,
+                android.R.layout.simple_spinner_dropdown_item, styleLabels));
+        String currentStyle = prefs.getString("tts_profile", "natural");
+        int currentIndex = 0;
+        for (int i = 0; i < styleValues.length; i++) {
+            if (styleValues[i].equals(currentStyle)) currentIndex = i;
+        }
+        voiceStyle.setSelection(currentIndex);
+        voiceStyle.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                prefs.edit().putString("tts_profile", styleValues[position]).apply();
+                if (VoiceControlService.isRunning()) {
+                    startService(new Intent(MainActivity.this, VoiceControlService.class)
+                            .setAction(VoiceControlService.ACTION_REFRESH_SETTINGS));
+                }
+            }
+
+            @Override public void onNothingSelected(AdapterView<?> parent) {}
+        });
+        layout.addView(voiceStyle, matchWrap());
+        Button previewVoice = secondaryButton("试听当前音色", v -> {
+            if (!VoiceControlService.isRunning()) {
+                toast("请先开启语音监听，再试听音色");
+                return;
+            }
+            startService(new Intent(this, VoiceControlService.class)
+                    .setAction(VoiceControlService.ACTION_PREVIEW_TTS));
+        });
+        layout.addView(previewVoice, matchWrap());
+
+        layout.addView(space(12));
+        CheckBox modelEnabled = new CheckBox(this);
+        modelEnabled.setText("启用智能对话（普通问题自动交给模型回答）");
+        modelEnabled.setTextColor(TEXT);
+        modelEnabled.setChecked(prefs.getBoolean("model_enabled", true));
+        layout.addView(modelEnabled);
+        EditText endpoint = input("电脑服务地址，例如 http://192.168.1.20:8765");
+        endpoint.setSingleLine(true);
+        endpoint.setText(prefs.getString("model_endpoint", ""));
+        EditText clientToken = input("电脑服务访问令牌（不是第三方 API Key）");
+        clientToken.setSingleLine(true);
+        clientToken.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        clientToken.setText(prefs.getString("bridge_client_token", ""));
+        layout.addView(endpoint, matchWrap());
+        layout.addView(clientToken, matchWrap());
+        Button saveModel = outlineButton("保存智能对话设置", v -> {
+            String address = endpoint.getText().toString().trim();
+            if (modelEnabled.isChecked() &&
+                    !address.startsWith("http://") && !address.startsWith("https://")) {
+                endpoint.setError("请填写以 http:// 或 https:// 开头的地址");
+                return;
+            }
+            prefs.edit()
+                    .putBoolean("model_enabled", modelEnabled.isChecked())
+                    .putString("model_endpoint", address)
+                    .putString("bridge_client_token", clientToken.getText().toString().trim())
+                    .apply();
+            toast("智能对话设置已保存；普通问题会自动交给模型回答");
+        });
+        layout.addView(saveModel, matchWrap());
         layout.addView(space(7));
-        layout.addView(text("开启后通知栏会显示语音监听状态；手机重启后需要手动重新开启。",
+        layout.addView(text("电脑地址仅用于开发测试；正式发布时应由应用内置云端 HTTPS 服务地址，用户无需配置。",
                 12, Color.rgb(135, 116, 105), false));
         return layout;
     }
@@ -336,22 +413,29 @@ public class MainActivity extends Activity {
 
     private void toggleVoiceControl() {
         if (VoiceControlService.isRunning()) {
+            getSharedPreferences("pet_settings", MODE_PRIVATE).edit()
+                    .putBoolean("voice_enabled", false).apply();
             startService(new Intent(this, VoiceControlService.class)
                     .setAction(VoiceControlService.ACTION_STOP));
-            updateVoiceButton();
+            voiceToggleButton.postDelayed(this::updateVoiceButton, 300L);
             return;
         }
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            getSharedPreferences("pet_settings", MODE_PRIVATE).edit()
+                    .putBoolean("voice_enabled", true).apply();
             requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, REQUEST_MICROPHONE);
             return;
         }
-        startVoiceControl();
+        getSharedPreferences("pet_settings", MODE_PRIVATE).edit()
+                .putBoolean("voice_enabled", true).apply();
+        startVoiceControl(true);
     }
 
-    private void startVoiceControl() {
+    private void startVoiceControl(boolean showToast) {
+        if (VoiceControlService.isRunning()) return;
         startForegroundService(new Intent(this, VoiceControlService.class));
-        voiceToggleButton.setText("关闭持续语音唤醒");
-        toast("正在加载离线语音模型，加载后请说：你好费雾");
+        if (voiceToggleButton != null) voiceToggleButton.setText("关闭持续语音唤醒");
+        if (showToast) toast("正在加载离线语音模型，加载后请说：你好费雾");
     }
 
     private void updateVoiceButton() {
@@ -372,6 +456,14 @@ public class MainActivity extends Activity {
         startForegroundService(service);
         petToggleButton.setText("桌宠已开启 · 可从通知栏停止");
         toast("费雾已经出来啦，长按它可以快速记待办");
+        SharedPreferences prefs = getSharedPreferences("pet_settings", MODE_PRIVATE);
+        if (prefs.getBoolean("voice_enabled", true)) {
+            if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                startVoiceControl(false);
+            } else {
+                requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, REQUEST_MICROPHONE);
+            }
+        }
     }
 
     private void showTaskDialog() {

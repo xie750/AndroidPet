@@ -14,9 +14,11 @@ import android.graphics.RectF;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
+import android.view.HapticFeedbackConstants;
 import android.view.MotionEvent;
 import android.view.View;
 
+import com.example.desktoppet.R;
 import com.example.desktoppet.ui.MainActivity;
 
 import java.io.InputStream;
@@ -29,7 +31,7 @@ public final class PetView extends View {
     }
 
     public enum Action {
-        IDLE, TAP, DRAG, LISTEN, THINK, REMIND, CELEBRATE
+        IDLE, OBSERVE, TAP, PET, POKE, DRAG, LAND, LISTEN, THINK, REMIND, CELEBRATE, SLEEP
     }
 
     private final Paint imagePaint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
@@ -41,15 +43,31 @@ public final class PetView extends View {
     private final Random random = new Random();
     private final DragListener dragListener;
     private Bitmap skinBitmap;
+    private Bitmap pettedBitmap;
+    private Bitmap pokedBitmap;
+    private Bitmap talkingBitmap;
+    private Bitmap sleepingBitmap;
+    private Bitmap renderedBitmap;
+    private Bitmap transitionFromBitmap;
+    private long bitmapTransitionStarted;
     private int selectedSkin;
     private float downRawX;
     private float downRawY;
     private float lastRawX;
     private float lastRawY;
     private boolean moved;
+    private boolean stroked;
     private boolean longPressed;
+    private boolean speaking;
+    private float lastDragDx;
+    private float lastDragDy;
+    private float touchNormalizedX = .5f;
+    private float touchNormalizedY = .5f;
+    private long downAt;
+    private long lastInteractionAt = System.currentTimeMillis();
+    private long nextAutonomousAt = lastInteractionAt + 9000L;
     private String message = "点我互动 · 长按记事";
-    private long messageUntil = Long.MAX_VALUE;
+    private long messageUntil = System.currentTimeMillis() + 7000L;
     private Action action = Action.IDLE;
     private long actionStarted;
     private long actionUntil;
@@ -63,9 +81,19 @@ public final class PetView extends View {
     }
 
     void reloadSkin() {
-        Bitmap old = skinBitmap;
+        recycleBitmaps();
         skinBitmap = loadSelectedSkin();
-        if (old != null && old != skinBitmap && !old.isRecycled()) old.recycle();
+        if (selectedSkin == 1) loadMistExpressions();
+        renderedBitmap = skinBitmap;
+        transitionFromBitmap = null;
+        invalidate();
+    }
+
+    void setSpeaking(boolean value) {
+        speaking = value;
+        lastInteractionAt = System.currentTimeMillis();
+        if (value && action == Action.SLEEP) setAction(Action.OBSERVE, 900L);
+        if (!value && action == Action.IDLE) nextAutonomousAt = lastInteractionAt + 7000L;
         invalidate();
     }
 
@@ -83,15 +111,17 @@ public final class PetView extends View {
     void setAction(Action nextAction, long duration) {
         action = nextAction;
         actionStarted = System.currentTimeMillis();
-        actionUntil = actionStarted + duration;
+        actionUntil = nextAction == Action.SLEEP ? Long.MAX_VALUE : actionStarted + duration;
+        if (nextAction != Action.IDLE && nextAction != Action.SLEEP) {
+            lastInteractionAt = actionStarted;
+        }
         invalidate();
     }
 
     @Override
     protected void onDetachedFromWindow() {
         handler.removeCallbacksAndMessages(null);
-        if (skinBitmap != null && !skinBitmap.isRecycled()) skinBitmap.recycle();
-        skinBitmap = null;
+        recycleBitmaps();
         super.onDetachedFromWindow();
     }
 
@@ -99,29 +129,60 @@ public final class PetView extends View {
     protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
         long now = System.currentTimeMillis();
-        if (now > actionUntil && action != Action.DRAG) action = Action.IDLE;
+        if (now > actionUntil && action != Action.DRAG && action != Action.SLEEP) {
+            action = Action.IDLE;
+        }
+        updateAutonomousBehavior(now);
         float density = getResources().getDisplayMetrics().density;
         float width = getWidth();
         float height = getHeight();
-        double phase = (now % 2200L) / 2200.0 * Math.PI * 2.0;
-        float bob = (float) Math.sin(phase) * 3.5f * density;
-        float rotation = (float) Math.sin(phase) * 1.4f;
+        double phase = (now % 2600L) / 2600.0 * Math.PI * 2.0;
+        float bob = (float) Math.sin(phase) * 1.6f * density;
+        float rotation = (float) Math.sin(phase) * .7f;
         float scaleX = 1f;
         float scaleY = 1f;
         float offsetX = 0f;
+        float offsetY = 0f;
 
         float progress = actionUntil > actionStarted
                 ? Math.min(1f, Math.max(0f, (now - actionStarted) / (float) (actionUntil - actionStarted)))
                 : 0f;
         switch (action) {
+            case OBSERVE:
+                rotation = (float) Math.sin(progress * Math.PI) * (touchNormalizedX < .5f ? -4f : 4f);
+                scaleX = scaleY = 1f + (float) Math.sin(progress * Math.PI) * .025f;
+                break;
             case TAP:
                 scaleX = 1f + (float) Math.sin(progress * Math.PI * 4f) * .09f;
                 scaleY = 1f - (float) Math.sin(progress * Math.PI * 4f) * .10f;
                 rotation = (float) Math.sin(progress * Math.PI * 5f) * 5f;
                 break;
+            case PET:
+                rotation = (touchNormalizedX - .5f) * 7f;
+                scaleX = 1f + (float) Math.sin(phase * 2) * .018f;
+                scaleY = 1f - (float) Math.sin(phase * 2) * .012f;
+                offsetY = 2f * density;
+                break;
+            case POKE:
+                float poke = (float) Math.sin(progress * Math.PI);
+                scaleX = 1f + poke * .14f;
+                scaleY = 1f - poke * .18f;
+                offsetX = (touchNormalizedX < .5f ? 1f : -1f) * poke * 7f * density;
+                rotation = (touchNormalizedX < .5f ? 1f : -1f) * poke * 7f;
+                break;
             case DRAG:
-                rotation = Math.max(-12f, Math.min(12f, (lastRawX - downRawX) / 9f));
-                scaleY = .95f;
+                rotation = Math.max(-14f, Math.min(14f, lastDragDx * .7f));
+                scaleX = .94f;
+                scaleY = 1.06f;
+                offsetX = Math.max(-4f * density, Math.min(4f * density, lastDragDx * .18f));
+                offsetY = -3f * density;
+                break;
+            case LAND:
+                float landingWave = (float) (Math.sin(progress * Math.PI * 3f) * (1f - progress));
+                float compression = Math.max(0f, landingWave);
+                scaleX = 1f + compression * .16f;
+                scaleY = 1f - compression * .20f;
+                offsetY = Math.abs(landingWave) * 4f * density;
                 break;
             case LISTEN:
                 scaleX = scaleY = 1f + (float) Math.sin(phase * 2) * .035f;
@@ -139,8 +200,20 @@ public final class PetView extends View {
                 scaleX = scaleY = 1f + (float) Math.sin(progress * Math.PI) * .13f;
                 drawConfetti(canvas, width, height, density, progress);
                 break;
+            case SLEEP:
+                bob = (float) Math.sin(phase) * .6f * density;
+                rotation = 0f;
+                scaleX = 1f + (float) Math.sin(phase) * .008f;
+                scaleY = 1f - (float) Math.sin(phase) * .012f;
+                break;
             default:
                 break;
+        }
+
+        if (speaking) {
+            float syllable = (float) Math.sin((now % 360L) / 360f * Math.PI * 2f);
+            scaleY *= 1f + syllable * .012f;
+            rotation += syllable * .65f;
         }
 
         if (now < messageUntil || messageUntil == Long.MAX_VALUE) {
@@ -152,7 +225,7 @@ public final class PetView extends View {
         float left = 7f * density;
         float right = width - 7f * density;
         canvas.save();
-        canvas.translate(width / 2f + offsetX, (top + bottom) / 2f + bob);
+        canvas.translate(width / 2f + offsetX, (top + bottom) / 2f + bob + offsetY);
         canvas.rotate(rotation);
         canvas.scale(scaleX, scaleY);
         canvas.translate(-width / 2f, -(top + bottom) / 2f);
@@ -163,17 +236,49 @@ public final class PetView extends View {
     }
 
     private void drawSkin(Canvas canvas, float left, float top, float right, float bottom) {
-        if (skinBitmap == null || skinBitmap.isRecycled()) return;
+        Bitmap target = targetBitmap();
+        if (target == null || target.isRecycled()) return;
+        long now = System.currentTimeMillis();
+        if (renderedBitmap != target) {
+            transitionFromBitmap = renderedBitmap;
+            renderedBitmap = target;
+            bitmapTransitionStarted = now;
+        }
+        float transition = Math.min(1f, (now - bitmapTransitionStarted) / 170f);
+        if (transitionFromBitmap != null && !transitionFromBitmap.isRecycled() && transition < 1f) {
+            drawBitmap(canvas, transitionFromBitmap, left, top, right, bottom,
+                    Math.round(255f * (1f - transition)), false);
+        }
+        drawBitmap(canvas, target, left, top, right, bottom, Math.round(255f * transition), true);
+        if (transition >= 1f) transitionFromBitmap = null;
+    }
+
+    private void drawBitmap(Canvas canvas, Bitmap bitmap, float left, float top, float right,
+                            float bottom, int alpha, boolean updateHitRect) {
         float maxWidth = right - left;
         float maxHeight = bottom - top;
-        float ratio = Math.min(maxWidth / skinBitmap.getWidth(), maxHeight / skinBitmap.getHeight());
-        float drawWidth = skinBitmap.getWidth() * ratio;
-        float drawHeight = skinBitmap.getHeight() * ratio;
+        float ratio = Math.min(maxWidth / bitmap.getWidth(), maxHeight / bitmap.getHeight());
+        float drawWidth = bitmap.getWidth() * ratio;
+        float drawHeight = bitmap.getHeight() * ratio;
         float x = (getWidth() - drawWidth) / 2f;
         float y = bottom - drawHeight;
-        imageRect.set(x, y, x + drawWidth, y + drawHeight);
+        RectF targetRect = updateHitRect ? imageRect : new RectF();
+        targetRect.set(x, y, x + drawWidth, y + drawHeight);
         imagePaint.setFilterBitmap(selectedSkin != 2);
-        canvas.drawBitmap(skinBitmap, null, imageRect, imagePaint);
+        imagePaint.setAlpha(alpha);
+        canvas.drawBitmap(bitmap, null, targetRect, imagePaint);
+        imagePaint.setAlpha(255);
+    }
+
+    private Bitmap targetBitmap() {
+        if (selectedSkin != 1) return skinBitmap;
+        if (speaking && talkingBitmap != null) return talkingBitmap;
+        switch (action) {
+            case PET: return pettedBitmap != null ? pettedBitmap : skinBitmap;
+            case POKE: return pokedBitmap != null ? pokedBitmap : skinBitmap;
+            case SLEEP: return sleepingBitmap != null ? sleepingBitmap : skinBitmap;
+            default: return skinBitmap;
+        }
     }
 
     private void drawListeningGlow(Canvas canvas, float cx, float cy, float density, double phase) {
@@ -238,35 +343,104 @@ public final class PetView extends View {
         return BitmapFactory.decodeResource(getResources(), SkinCatalog.BUILT_INS[index].resourceId, options);
     }
 
+    private void loadMistExpressions() {
+        BitmapFactory.Options options = new BitmapFactory.Options();
+        options.inSampleSize = 2;
+        options.inPreferredConfig = Bitmap.Config.ARGB_8888;
+        pettedBitmap = BitmapFactory.decodeResource(getResources(), R.drawable.skin_mist_blob_petted, options);
+        pokedBitmap = BitmapFactory.decodeResource(getResources(), R.drawable.skin_mist_blob_poked, options);
+        talkingBitmap = BitmapFactory.decodeResource(getResources(), R.drawable.skin_mist_blob_talking, options);
+        sleepingBitmap = BitmapFactory.decodeResource(getResources(), R.drawable.skin_mist_blob_sleeping, options);
+    }
+
+    private void recycleBitmaps() {
+        Bitmap[] bitmaps = {skinBitmap, pettedBitmap, pokedBitmap, talkingBitmap, sleepingBitmap};
+        for (Bitmap bitmap : bitmaps) {
+            if (bitmap != null && !bitmap.isRecycled()) bitmap.recycle();
+        }
+        skinBitmap = pettedBitmap = pokedBitmap = talkingBitmap = sleepingBitmap = null;
+        renderedBitmap = transitionFromBitmap = null;
+    }
+
+    private void updateAutonomousBehavior(long now) {
+        if (speaking || action == Action.DRAG || action == Action.SLEEP) return;
+        if (action == Action.IDLE && now - lastInteractionAt > 38_000L) {
+            messageUntil = 0L;
+            setAction(Action.SLEEP, Long.MAX_VALUE);
+            return;
+        }
+        if (action == Action.IDLE && now >= nextAutonomousAt) {
+            touchNormalizedX = random.nextBoolean() ? .25f : .75f;
+            setAction(Action.OBSERVE, 1800L + random.nextInt(900));
+            nextAutonomousAt = now + 9000L + random.nextInt(9000);
+        }
+    }
+
     @Override
     public boolean onTouchEvent(MotionEvent event) {
         switch (event.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:
                 downRawX = lastRawX = event.getRawX();
                 downRawY = lastRawY = event.getRawY();
+                downAt = event.getEventTime();
                 moved = false;
+                stroked = false;
                 longPressed = false;
-                handler.postDelayed(longPressRunnable, 650L);
+                lastDragDx = lastDragDy = 0f;
+                touchNormalizedX = getWidth() == 0 ? .5f : event.getX() / getWidth();
+                touchNormalizedY = getHeight() == 0 ? .5f : event.getY() / getHeight();
+                lastInteractionAt = System.currentTimeMillis();
+                nextAutonomousAt = lastInteractionAt + 9000L + random.nextInt(7000);
+                if (action == Action.SLEEP) {
+                    showMessage("唔……你来啦", Action.OBSERVE, 1800L);
+                } else {
+                    setAction(Action.OBSERVE, 700L);
+                }
+                handler.postDelayed(longPressRunnable, 780L);
                 return true;
             case MotionEvent.ACTION_MOVE:
                 float dx = event.getRawX() - lastRawX;
                 float dy = event.getRawY() - lastRawY;
-                if (Math.hypot(event.getRawX() - downRawX, event.getRawY() - downRawY) > 12) {
+                float totalDx = event.getRawX() - downRawX;
+                float totalDy = event.getRawY() - downRawY;
+                float distance = (float) Math.hypot(totalDx, totalDy);
+                float density = getResources().getDisplayMetrics().density;
+                if (distance > 22f * density) {
                     moved = true;
+                    stroked = false;
                     action = Action.DRAG;
                     handler.removeCallbacks(longPressRunnable);
+                    dragListener.moveBy(Math.round(dx), Math.round(dy));
+                } else if (event.getEventTime() - downAt > 130L &&
+                        touchNormalizedY < .68f && distance > 5f * density) {
+                    stroked = true;
+                    action = Action.PET;
+                    actionStarted = System.currentTimeMillis();
+                    actionUntil = actionStarted + 1600L;
+                    handler.removeCallbacks(longPressRunnable);
                 }
-                dragListener.moveBy(Math.round(dx), Math.round(dy));
+                lastDragDx = dx;
+                lastDragDy = dy;
                 lastRawX = event.getRawX();
                 lastRawY = event.getRawY();
                 return true;
             case MotionEvent.ACTION_UP:
             case MotionEvent.ACTION_CANCEL:
                 handler.removeCallbacks(longPressRunnable);
-                if (action == Action.DRAG) setAction(Action.TAP, 500L);
-                if (!moved && !longPressed && event.getActionMasked() == MotionEvent.ACTION_UP) {
-                    String[] phrases = {"今天也要加油呀", "记得喝水", "有事长按告诉我", "完成一件就很棒", "我会帮你守着待办"};
-                    showMessage(phrases[random.nextInt(phrases.length)], Action.TAP, 3000L);
+                lastInteractionAt = System.currentTimeMillis();
+                if (moved) {
+                    setAction(Action.LAND, 760L);
+                    performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK);
+                } else if (stroked) {
+                    String[] phrases = {"嗯……再摸一下", "这里很舒服", "尾巴都要藏不住啦"};
+                    showMessage(phrases[random.nextInt(phrases.length)], Action.PET, 2300L);
+                    performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK);
+                } else if (!longPressed && event.getActionMasked() == MotionEvent.ACTION_UP) {
+                    String[] phrases = touchNormalizedY < .62f
+                            ? new String[]{"呀！", "被你戳到了", "我有在看你哦"}
+                            : new String[]{"肚子软软的吧", "不许一直戳", "痒……"};
+                    showMessage(phrases[random.nextInt(phrases.length)], Action.POKE, 1500L);
+                    performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
                     performClick();
                 }
                 return true;
@@ -282,11 +456,15 @@ public final class PetView extends View {
     }
 
     private final Runnable longPressRunnable = () -> {
-        if (moved) return;
+        if (moved || stroked) return;
         longPressed = true;
-        Intent intent = new Intent(getContext(), MainActivity.class)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                .putExtra(MainActivity.EXTRA_QUICK_ADD, true);
-        getContext().startActivity(intent);
+        showMessage("抱一下……再帮你记事", Action.PET, 1500L);
+        performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
+        handler.postDelayed(() -> {
+            Intent intent = new Intent(getContext(), MainActivity.class)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                    .putExtra(MainActivity.EXTRA_QUICK_ADD, true);
+            getContext().startActivity(intent);
+        }, 350L);
     };
 }

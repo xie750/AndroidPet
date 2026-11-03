@@ -2,6 +2,10 @@ plugins {
     id "com.android.application"
 }
 
+def assistantEndpoint = providers.gradleProperty("FEIWU_ASSISTANT_ENDPOINT").orElse("").get()
+def assistantClientToken = providers.gradleProperty("FEIWU_ASSISTANT_CLIENT_TOKEN").orElse("").get()
+def javaString = { value -> "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\"" }
+
 android {
     namespace "com.example.desktoppet"
     compileSdk 35
@@ -10,8 +14,14 @@ android {
         applicationId "com.example.desktoppet"
         minSdk 26
         targetSdk 35
-        versionCode 3
-        versionName "0.3.0"
+        versionCode 5
+        versionName "0.5.0"
+        buildConfigField "String", "ASSISTANT_ENDPOINT", javaString(assistantEndpoint)
+        buildConfigField "String", "ASSISTANT_CLIENT_TOKEN", javaString(assistantClientToken)
+    }
+
+    buildFeatures {
+        buildConfig true
     }
 
     compileOptions {

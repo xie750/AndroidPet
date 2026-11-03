@@ -23,11 +23,17 @@ final class VoiceCommandProcessor {
         final String reply;
         final boolean stopVoice;
         final PetView.Action action;
+        final boolean handled;
 
         Result(String reply, boolean stopVoice, PetView.Action action) {
+            this(reply, stopVoice, action, true);
+        }
+
+        Result(String reply, boolean stopVoice, PetView.Action action, boolean handled) {
             this.reply = reply;
             this.stopVoice = stopVoice;
             this.action = action;
+            this.handled = handled;
         }
     }
 
@@ -57,19 +63,45 @@ final class VoiceCommandProcessor {
             return todayTasks();
         }
 
-        if (containsAny(text, "记个笔记", "添加笔记", "记一下", "帮我记住")) {
+        if (containsAny(text, "你会什么", "能做什么", "怎么用", "帮助")) {
+            return new Result("我能记待办、设提醒、记笔记和查询今天的安排。也可以随便和我聊两句。",
+                    false, PetView.Action.TAP);
+        }
+
+        if (containsAny(text, "几点了", "现在几点", "当前时间")) {
+            String time = new SimpleDateFormat("现在是HH点mm分", Locale.CHINA).format(new Date());
+            return new Result(time, false, PetView.Action.TAP);
+        }
+
+        if (containsAny(text, "几号", "星期几", "今天日期")) {
+            String date = new SimpleDateFormat("今天是MM月dd日，EEEE", Locale.CHINA).format(new Date());
+            return new Result(date, false, PetView.Action.TAP);
+        }
+
+        if (containsAny(text, "谢谢", "辛苦了", "真棒")) {
+            return new Result("不客气，有事再叫我。", false, PetView.Action.CELEBRATE);
+        }
+
+        if (containsAny(text, "你好", "在吗", "干嘛呢")) {
+            return new Result("我在呢，今天想让我帮你做什么？", false, PetView.Action.LISTEN);
+        }
+
+        if (containsAny(text, "记个笔记", "添加笔记", "记一下", "记下", "记录一下", "帮我记住", "写进笔记")) {
             String content = stripPrefix(text,
-                    "帮我记个笔记", "记个笔记", "添加笔记", "帮我记一下", "记一下", "帮我记住");
+                    "帮我记个笔记", "记个笔记", "添加笔记", "帮我记一下", "记一下", "记下",
+                    "记录一下", "帮我记住", "写进笔记", "笔记里");
             if (content.isEmpty()) return new Result("要记什么内容呢？", false, PetView.Action.LISTEN);
             db.insert("NOTE", makeTitle(content), content, 0L, "NONE");
             return new Result("记好了：" + shorten(content), false, PetView.Action.CELEBRATE);
         }
 
-        if (containsAny(text, "提醒我", "添加待办", "添加一个待办", "新建待办", "加个待办", "记个待办", "帮我安排")) {
+        if (containsAny(text, "提醒我", "提醒一下", "添加待办", "添加一个待办", "新建待办", "加个待办",
+                "记个待办", "帮我安排", "放到待办", "加入待办")) {
             String content = stripPrefix(text,
                     "语音帮我", "帮我提醒我", "提醒我", "帮我添加一个待办", "添加一个待办",
                     "帮我添加待办", "添加待办", "新建待办",
-                    "加个待办", "记个待办", "帮我安排");
+                    "加个待办", "记个待办", "帮我安排", "提醒一下", "放到待办里", "放到待办",
+                    "加入待办里", "加入待办", "把");
             if (content.isEmpty()) return new Result("待办内容是什么？", false, PetView.Action.LISTEN);
             long dueAt = parseDueAt(content);
             String title = cleanTaskTitle(content);
@@ -218,7 +250,7 @@ final class VoiceCommandProcessor {
     }
 
     private Result unknown() {
-        return new Result("我没听懂。可以说：提醒我明天下午三点交水费",
-                false, PetView.Action.THINK);
+        return new Result("",
+                false, PetView.Action.THINK, false);
     }
 }

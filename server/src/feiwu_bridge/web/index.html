@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>费雾 · 模型中转台</title>
+  <link rel="stylesheet" href="/admin/assets/styles.css">
+</head>
+<body>
+  <div class="ambient ambient-one"></div>
+  <div class="ambient ambient-two"></div>
+  <main class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="mark" aria-hidden="true"><span></span><span></span></div>
+        <div>
+          <p class="eyebrow">FEIWU BRIDGE</p>
+          <h1>模型中转台</h1>
+        </div>
+      </div>
+      <div class="status-pill" id="serviceStatus">
+        <span class="status-dot"></span>
+        <span>正在检查服务</span>
+      </div>
+    </header>
+
+    <section class="hero">
+      <div>
+        <p class="eyebrow">电脑端控制面板</p>
+        <h2>模型可以换，<br><em>安卓端不用动。</em></h2>
+        <p class="hero-copy">在这里管理第三方模型、接口地址与密钥。手机始终只连接费雾中转服务。</p>
+      </div>
+      <div class="route-card" aria-label="请求链路">
+        <div class="route-node"><b>01</b><span>安卓桌宠</span></div>
+        <div class="route-line"><i></i></div>
+        <div class="route-node active"><b>02</b><span>费雾中转</span></div>
+        <div class="route-line"><i></i></div>
+        <div class="route-node"><b>03</b><span>第三方模型</span></div>
+      </div>
+    </section>
+
+    <section class="grid">
+      <article class="panel config-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">PROVIDER</p>
+            <h3>模型服务配置</h3>
+          </div>
+          <span class="key-badge" id="keyBadge">密钥状态未知</span>
+        </div>
+
+        <form id="configForm">
+          <label>
+            <span>服务预设</span>
+            <select id="providerPreset">
+              <option value="deepseek">DeepSeek 官方 API</option>
+              <option value="custom">其他 OpenAI 兼容服务</option>
+            </select>
+          </label>
+
+          <div class="field-row">
+            <label>
+              <span>API 基础地址</span>
+              <input id="baseUrl" type="url" required placeholder="https://api.deepseek.com">
+            </label>
+            <label>
+              <span>对话路径</span>
+              <input id="chatPath" type="text" required placeholder="/chat/completions">
+            </label>
+          </div>
+
+          <label>
+            <span>模型名称</span>
+            <input id="modelName" type="text" list="deepseekModels" required placeholder="deepseek-flash">
+            <datalist id="deepseekModels">
+              <option value="deepseek-flash"></option>
+              <option value="deepseek-v4-pro"></option>
+            </datalist>
+            <small>可直接输入服务商支持的其他模型名。</small>
+          </label>
+
+          <label>
+            <span>第三方 API Key</span>
+            <div class="secret-field">
+              <input id="apiKey" type="password" autocomplete="new-password" placeholder="留空表示保持当前密钥">
+              <button class="icon-button" id="toggleKey" type="button" aria-label="显示或隐藏密钥">显示</button>
+            </div>
+            <small>保存后经过加密写入电脑本地，页面不会再次读取原始值。</small>
+          </label>
+
+          <label class="check-row">
+            <input id="clearKey" type="checkbox">
+            <span>清除当前已保存的 API Key</span>
+          </label>
+
+          <div class="actions">
+            <button class="button primary" type="submit">保存并应用</button>
+            <button class="button secondary" id="testButton" type="button">测试模型连接</button>
+          </div>
+        </form>
+      </article>
+
+      <aside class="side-stack">
+        <article class="panel compact-panel">
+          <p class="eyebrow">ANDROID</p>
+          <h3>手机连接信息</h3>
+          <p>把下面地址和 <code>FEIWU_CLIENT_TOKEN</code> 填入安卓端智能对话设置。</p>
+          <div class="copy-box">
+            <code id="phoneEndpoint">http://电脑局域网IP:8765</code>
+            <button id="copyEndpoint" type="button">复制</button>
+          </div>
+          <p class="hint">若这里显示 localhost，请换成电脑的 IPv4 局域网地址。</p>
+        </article>
+
+        <article class="panel compact-panel security-panel">
+          <p class="eyebrow">SECURITY</p>
+          <h3>密钥边界</h3>
+          <ul>
+            <li><span>第三方 API Key</span><b>只留在电脑</b></li>
+            <li><span>管理令牌</span><b>只用于此网页</b></li>
+            <li><span>手机访问令牌</span><b>可随时更换</b></li>
+          </ul>
+        </article>
+      </aside>
+    </section>
+  </main>
+
+  <div class="login-layer" id="loginLayer" hidden>
+    <form class="login-card" id="loginForm">
+      <p class="eyebrow">LOCAL ADMIN</p>
+      <h2>进入模型中转台</h2>
+      <p>请输入电脑端 <code>FEIWU_ADMIN_TOKEN</code>。令牌只保留在当前浏览器标签页。</p>
+      <input id="adminToken" type="password" autocomplete="current-password" required placeholder="管理令牌">
+      <button class="button primary" type="submit">验证并进入</button>
+      <p class="form-message" id="loginMessage"></p>
+    </form>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="/admin/assets/app.js" defer></script>
+</body>
+</html>
