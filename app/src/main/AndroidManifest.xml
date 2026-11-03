@@ -26,7 +26,7 @@
         android:theme="@style/AppTheme">
 
         <activity
-            android:name=".MainActivity"
+            android:name=".ui.MainActivity"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -35,7 +35,7 @@
         </activity>
 
         <service
-            android:name=".PetOverlayService"
+            android:name=".feature.pet.PetOverlayService"
             android:exported="false"
             android:foregroundServiceType="specialUse">
             <property
@@ -44,16 +44,16 @@
         </service>
 
         <service
-            android:name=".VoiceControlService"
+            android:name=".feature.voice.VoiceControlService"
             android:exported="false"
             android:foregroundServiceType="microphone" />
 
         <receiver
-            android:name=".AlarmReceiver"
+            android:name=".feature.reminder.AlarmReceiver"
             android:exported="false" />
 
         <receiver
-            android:name=".BootReceiver"
+            android:name=".receiver.BootReceiver"
             android:enabled="true"
             android:exported="true">
             <intent-filter>

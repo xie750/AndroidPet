@@ -1,4 +1,4 @@
-package com.example.desktoppet;
+package com.example.desktoppet.feature.pet;
 
 import android.annotation.SuppressLint;
 import android.content.Context;
@@ -17,16 +17,18 @@ import android.os.Looper;
 import android.view.MotionEvent;
 import android.view.View;
 
+import com.example.desktoppet.ui.MainActivity;
+
 import java.io.InputStream;
 import java.util.Random;
 
 @SuppressLint("ViewConstructor")
-final class PetView extends View {
+public final class PetView extends View {
     interface DragListener {
         void moveBy(int dx, int dy);
     }
 
-    enum Action {
+    public enum Action {
         IDLE, TAP, DRAG, LISTEN, THINK, REMIND, CELEBRATE
     }
 

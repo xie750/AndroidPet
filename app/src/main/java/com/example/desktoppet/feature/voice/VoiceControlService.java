@@ -1,4 +1,4 @@
-package com.example.desktoppet;
+package com.example.desktoppet.feature.voice;
 
 import android.app.Notification;
 import android.app.NotificationChannel;
@@ -14,6 +14,11 @@ import android.os.Looper;
 import android.speech.tts.TextToSpeech;
 import android.speech.tts.UtteranceProgressListener;
 
+import com.example.desktoppet.R;
+import com.example.desktoppet.feature.pet.PetOverlayService;
+import com.example.desktoppet.feature.pet.PetView;
+import com.example.desktoppet.ui.MainActivity;
+
 import org.json.JSONException;
 import org.json.JSONObject;
 import org.vosk.Model;
@@ -26,7 +31,7 @@ import java.io.IOException;
 import java.util.Locale;
 
 public class VoiceControlService extends Service implements RecognitionListener {
-    static final String ACTION_STOP = "com.example.desktoppet.STOP_VOICE";
+    public static final String ACTION_STOP = "com.example.desktoppet.STOP_VOICE";
     private static final String CHANNEL_ID = "voice_control";
     private static final int NOTIFICATION_ID = 88;
     private static volatile boolean running;
@@ -101,7 +106,7 @@ public class VoiceControlService extends Service implements RecognitionListener 
         return null;
     }
 
-    static boolean isRunning() {
+    public static boolean isRunning() {
         return running;
     }
 

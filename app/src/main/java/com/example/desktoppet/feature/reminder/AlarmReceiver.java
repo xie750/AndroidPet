@@ -1,4 +1,4 @@
-package com.example.desktoppet;
+package com.example.desktoppet.feature.reminder;
 
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
@@ -7,6 +7,12 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.graphics.Color;
+
+import com.example.desktoppet.R;
+import com.example.desktoppet.data.AppDatabase;
+import com.example.desktoppet.feature.pet.PetOverlayService;
+import com.example.desktoppet.model.Item;
+import com.example.desktoppet.ui.MainActivity;
 
 import java.util.Calendar;
 
@@ -59,7 +65,7 @@ public class AlarmReceiver extends BroadcastReceiver {
         db.close();
     }
 
-    static void ensureChannel(Context context) {
+    public static void ensureChannel(Context context) {
         NotificationManager nm = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
         if (nm == null) return;
         NotificationChannel channel = new NotificationChannel(

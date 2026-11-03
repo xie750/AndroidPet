@@ -1,4 +1,4 @@
-package com.example.desktoppet;
+package com.example.desktoppet.feature.reminder;
 
 import android.app.AlarmManager;
 import android.app.PendingIntent;
@@ -6,10 +6,10 @@ import android.content.Context;
 import android.content.Intent;
 import android.os.Build;
 
-final class ReminderScheduler {
+public final class ReminderScheduler {
     private ReminderScheduler() {}
 
-    static void schedule(Context context, long itemId, long dueAt) {
+    public static void schedule(Context context, long itemId, long dueAt) {
         if (dueAt <= System.currentTimeMillis()) return;
         AlarmManager manager = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
         if (manager == null) return;
@@ -25,7 +25,7 @@ final class ReminderScheduler {
         }
     }
 
-    static void cancel(Context context, long itemId) {
+    public static void cancel(Context context, long itemId) {
         AlarmManager manager = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
         if (manager != null) manager.cancel(pendingIntent(context, itemId));
     }

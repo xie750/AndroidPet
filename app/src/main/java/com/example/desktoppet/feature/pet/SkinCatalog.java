@@ -1,10 +1,12 @@
-package com.example.desktoppet;
+package com.example.desktoppet.feature.pet;
 
-final class SkinCatalog {
-    static final class Skin {
-        final String name;
-        final String description;
-        final int resourceId;
+import com.example.desktoppet.R;
+
+public final class SkinCatalog {
+    public static final class Skin {
+        public final String name;
+        public final String description;
+        public final int resourceId;
 
         Skin(String name, String description, int resourceId) {
             this.name = name;
@@ -13,7 +15,7 @@ final class SkinCatalog {
         }
     }
 
-    static final Skin[] BUILT_INS = {
+    public static final Skin[] BUILT_INS = {
             new Skin("雾术师 · Q版", "二次元 Q 版人物", R.drawable.skin_chibi),
             new Skin("雾团精灵", "软萌云雾团子", R.drawable.skin_mist_blob),
             new Skin("像素雾狐", "复古像素宠物", R.drawable.skin_pixel_fox),
@@ -24,11 +26,11 @@ final class SkinCatalog {
 
     private SkinCatalog() {}
 
-    static int safeIndex(int index) {
+    public static int safeIndex(int index) {
         return index >= 0 && index < BUILT_INS.length ? index : 1;
     }
 
-    static String[] names() {
+    public static String[] names() {
         String[] names = new String[BUILT_INS.length];
         for (int i = 0; i < BUILT_INS.length; i++) names[i] = BUILT_INS[i].name;
         return names;

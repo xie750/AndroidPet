@@ -1,4 +1,4 @@
-package com.example.desktoppet;
+package com.example.desktoppet.data;
 
 import android.content.ContentValues;
 import android.content.Context;
@@ -6,14 +6,16 @@ import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
 
+import com.example.desktoppet.model.Item;
+
 import java.util.ArrayList;
 import java.util.List;
 
-final class AppDatabase extends SQLiteOpenHelper {
+public final class AppDatabase extends SQLiteOpenHelper {
     private static final String DB_NAME = "desktop_pet.db";
     private static final int DB_VERSION = 1;
 
-    AppDatabase(Context context) {
+    public AppDatabase(Context context) {
         super(context, DB_NAME, null, DB_VERSION);
     }
 
@@ -35,7 +37,7 @@ final class AppDatabase extends SQLiteOpenHelper {
         // Version 1 has no migrations yet.
     }
 
-    long insert(String type, String title, String content, long dueAt, String repeatType) {
+    public long insert(String type, String title, String content, long dueAt, String repeatType) {
         ContentValues values = new ContentValues();
         values.put("type", type);
         values.put("title", title);
@@ -46,7 +48,7 @@ final class AppDatabase extends SQLiteOpenHelper {
         return getWritableDatabase().insertOrThrow("items", null, values);
     }
 
-    List<Item> getAll() {
+    public List<Item> getAll() {
         List<Item> result = new ArrayList<>();
         try (Cursor cursor = getReadableDatabase().rawQuery(
                 "SELECT id,type,title,content,due_at,done,repeat_type,created_at " +
@@ -57,7 +59,7 @@ final class AppDatabase extends SQLiteOpenHelper {
         return result;
     }
 
-    List<Item> getPendingTasks() {
+    public List<Item> getPendingTasks() {
         List<Item> result = new ArrayList<>();
         try (Cursor cursor = getReadableDatabase().rawQuery(
                 "SELECT id,type,title,content,due_at,done,repeat_type,created_at " +
@@ -68,7 +70,7 @@ final class AppDatabase extends SQLiteOpenHelper {
         return result;
     }
 
-    Item get(long id) {
+    public Item get(long id) {
         try (Cursor cursor = getReadableDatabase().rawQuery(
                 "SELECT id,type,title,content,due_at,done,repeat_type,created_at FROM items WHERE id=?",
                 new String[]{String.valueOf(id)})) {
@@ -76,19 +78,19 @@ final class AppDatabase extends SQLiteOpenHelper {
         }
     }
 
-    void markDone(long id, boolean done) {
+    public void markDone(long id, boolean done) {
         ContentValues values = new ContentValues();
         values.put("done", done ? 1 : 0);
         getWritableDatabase().update("items", values, "id=?", new String[]{String.valueOf(id)});
     }
 
-    void updateDue(long id, long dueAt) {
+    public void updateDue(long id, long dueAt) {
         ContentValues values = new ContentValues();
         values.put("due_at", dueAt);
         getWritableDatabase().update("items", values, "id=?", new String[]{String.valueOf(id)});
     }
 
-    void delete(long id) {
+    public void delete(long id) {
         getWritableDatabase().delete("items", "id=?", new String[]{String.valueOf(id)});
     }
 

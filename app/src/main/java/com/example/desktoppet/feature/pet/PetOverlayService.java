@@ -1,4 +1,4 @@
-package com.example.desktoppet;
+package com.example.desktoppet.feature.pet;
 
 import android.app.Notification;
 import android.app.NotificationChannel;
@@ -15,9 +15,12 @@ import android.provider.Settings;
 import android.view.Gravity;
 import android.view.WindowManager;
 
+import com.example.desktoppet.R;
+import com.example.desktoppet.ui.MainActivity;
+
 public class PetOverlayService extends Service {
-    static final String ACTION_STOP = "com.example.desktoppet.STOP_PET";
-    static final String ACTION_REFRESH_SKIN = "com.example.desktoppet.REFRESH_SKIN";
+    public static final String ACTION_STOP = "com.example.desktoppet.STOP_PET";
+    public static final String ACTION_REFRESH_SKIN = "com.example.desktoppet.REFRESH_SKIN";
     private static final String CHANNEL_ID = "pet_running";
     private static final int FOREGROUND_ID = 42;
 
@@ -110,21 +113,21 @@ public class PetOverlayService extends Service {
         try { windowManager.updateViewLayout(petView, params); } catch (RuntimeException ignored) {}
     }
 
-    static void showReminderIfRunning(String message) {
+    public static void showReminderIfRunning(String message) {
         PetOverlayService service = runningInstance;
         if (service != null && service.petView != null) {
             service.petView.post(() -> service.petView.showMessage("该做：" + message));
         }
     }
 
-    static void showAssistantMessage(String message, PetView.Action action) {
+    public static void showAssistantMessage(String message, PetView.Action action) {
         PetOverlayService service = runningInstance;
         if (service != null && service.petView != null) {
             service.petView.post(() -> service.petView.showMessage(message, action, 5000L));
         }
     }
 
-    static boolean isRunning() {
+    public static boolean isRunning() {
         return runningInstance != null;
     }
 

@@ -1,4 +1,4 @@
-package com.example.desktoppet;
+package com.example.desktoppet.ui;
 
 import android.Manifest;
 import android.app.Activity;
@@ -34,6 +34,14 @@ import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
 import android.widget.AdapterView;
+
+import com.example.desktoppet.data.AppDatabase;
+import com.example.desktoppet.feature.pet.PetOverlayService;
+import com.example.desktoppet.feature.pet.SkinCatalog;
+import com.example.desktoppet.feature.reminder.AlarmReceiver;
+import com.example.desktoppet.feature.reminder.ReminderScheduler;
+import com.example.desktoppet.feature.voice.VoiceControlService;
+import com.example.desktoppet.model.Item;
 
 import java.text.SimpleDateFormat;
 import java.util.Calendar;

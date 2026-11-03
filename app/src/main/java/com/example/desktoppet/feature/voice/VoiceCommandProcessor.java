@@ -1,7 +1,13 @@
-package com.example.desktoppet;
+package com.example.desktoppet.feature.voice;
 
 import android.content.Context;
 import android.content.Intent;
+
+import com.example.desktoppet.data.AppDatabase;
+import com.example.desktoppet.feature.pet.PetOverlayService;
+import com.example.desktoppet.feature.pet.PetView;
+import com.example.desktoppet.feature.reminder.ReminderScheduler;
+import com.example.desktoppet.model.Item;
 
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;

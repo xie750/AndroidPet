@@ -3,9 +3,10 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$projectRoot = (Resolve-Path (Join-Path $scriptDir '..\..')).Path
 $packageName = 'com.example.desktoppet'
-$mainActivity = "$packageName/.MainActivity"
+$mainActivity = "$packageName/.ui.MainActivity"
 $apkPath = Join-Path $projectRoot 'app\build\outputs\apk\debug\app-debug.apk'
 
 function Resolve-Adb {

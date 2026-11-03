@@ -44,6 +44,8 @@ google-services.json
 *.apk
 *.aab
 *.apks
+artifacts/*
+!artifacts/README.md
 
 # ================================
 # 日志、临时文本与系统文件

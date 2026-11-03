@@ -1,9 +1,14 @@
-package com.example.desktoppet;
+package com.example.desktoppet.receiver;
 
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.provider.Settings;
+
+import com.example.desktoppet.data.AppDatabase;
+import com.example.desktoppet.feature.pet.PetOverlayService;
+import com.example.desktoppet.feature.reminder.ReminderScheduler;
+import com.example.desktoppet.model.Item;
 
 public class BootReceiver extends BroadcastReceiver {
     @Override
