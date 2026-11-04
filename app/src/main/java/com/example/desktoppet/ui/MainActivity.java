@@ -78,6 +78,10 @@ public class MainActivity extends Activity {
     private Button voiceToggleButton;
     private ImageView skinPreview;
     private TextView skinDescription;
+    private FrameLayout pageHost;
+    private TextView pageTitle;
+    private Button[] navigationButtons;
+    private int activePageIndex;
     private final Handler startupHandler = new Handler(Looper.getMainLooper());
     private FrameLayout startupOverlay;
     private TextView startupStage;
@@ -171,102 +175,131 @@ public class MainActivity extends Activity {
         screen.addView(new DeepSeaBackdropView(this), new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
-        ScrollView scroll = new ScrollView(this);
-        scroll.setFillViewport(true);
-        scroll.setBackgroundColor(Color.TRANSPARENT);
-        scroll.setClipToPadding(false);
-        scroll.setVerticalScrollBarEnabled(false);
-        LinearLayout root = vertical();
-        root.setPadding(dp(16), dp(18), dp(16), dp(48));
-        scroll.addView(root, matchWrap());
+        LinearLayout chrome = vertical();
+        chrome.setPadding(dp(12), dp(8), dp(12), dp(10));
 
+        LinearLayout header = new LinearLayout(this);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        header.setPadding(dp(8), 0, dp(6), 0);
+        LinearLayout titleStack = vertical();
+        titleStack.addView(text("FEIWU · PERSONAL CORE", 9, CYAN, true));
+        pageTitle = text("首页", 22, TEXT, true);
+        titleStack.addView(pageTitle);
+        header.addView(titleStack, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        TextView local = text("●  本机运行", 11, SIGNAL, true);
+        local.setPadding(dp(11), dp(7), dp(11), dp(7));
+        local.setBackground(rounded(Color.argb(120, 23, 52, 45), 10));
+        header.addView(local);
+        chrome.addView(header, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(58)));
+
+        pageHost = new FrameLayout(this);
+        pageHost.addView(buildHomePage(), fullFrame());
+        pageHost.addView(buildRecordsPage(), fullFrame());
+        pageHost.addView(buildCompanionPage(), fullFrame());
+        pageHost.addView(buildSettingsPage(), fullFrame());
+        chrome.addView(pageHost, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        chrome.addView(buildBottomNavigation(), new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(70)));
+        screen.addView(chrome, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        switchPage(0);
+        if (showStartupAnimation) screen.addView(buildStartupOverlay(), new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        return screen;
+    }
+
+    private View buildHomePage() {
+        LinearLayout content = pageContent("TODAY OVERVIEW", "把常用动作留在第一屏，不再向下找功能。");
         FrameLayout hero = new FrameLayout(this);
-        hero.setPadding(dp(20), dp(18), dp(20), dp(18));
+        hero.setPadding(dp(19), dp(18), dp(16), dp(16));
         hero.setBackground(heroSurface());
-
-        LinearLayout heroCopy = vertical();
-        heroCopy.addView(text("FEIWU · DEEPSEA CORE", 10, CYAN, true));
-        heroCopy.addView(space(5));
-        heroCopy.addView(text("费雾", 25, TEXT, true));
-        heroCopy.addView(space(16));
-        heroCopy.addView(text(greeting(), 32, TEXT, true));
-        heroCopy.addView(space(5));
-        heroCopy.addView(text("灵核已连接，随时听候你的声音", 13, TEXT_MUTED, false));
-        FrameLayout.LayoutParams copyParams = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        copyParams.gravity = Gravity.START | Gravity.TOP;
-        hero.addView(heroCopy, copyParams);
-
-        ImageView heroMascot = new ImageView(this);
-        heroMascot.setImageResource(R.drawable.skin_mist_blob);
-        heroMascot.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
-        heroMascot.setContentDescription("费雾雾狐桌宠");
-        FrameLayout.LayoutParams mascotParams = new FrameLayout.LayoutParams(dp(225), dp(225));
+        LinearLayout copy = vertical();
+        copy.addView(text(greeting(), 29, TEXT, true));
+        copy.addView(space(5));
+        copy.addView(text("费雾已连接，提醒、记录和语音随时可用。", 13, TEXT_MUTED, false));
+        TextView online = text("●  DESKTOP PET ONLINE", 10, SIGNAL, true);
+        online.setPadding(0, dp(18), 0, 0);
+        copy.addView(online);
+        hero.addView(copy, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.START));
+        ImageView mascot = new ImageView(this);
+        mascot.setImageResource(R.drawable.skin_mist_blob);
+        mascot.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        mascot.setContentDescription("费雾雾狐桌宠");
+        FrameLayout.LayoutParams mascotParams = new FrameLayout.LayoutParams(dp(150), dp(150));
         mascotParams.gravity = Gravity.END | Gravity.BOTTOM;
-        mascotParams.setMargins(0, dp(54), dp(-24), dp(24));
-        hero.addView(heroMascot, mascotParams);
+        mascotParams.setMargins(0, dp(22), dp(-14), dp(-8));
+        hero.addView(mascot, mascotParams);
+        content.addView(hero, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(218)));
 
-        TextView online = text("●  桌宠在线 · 正在聆听", 13, TEXT, true);
-        online.setPadding(dp(14), dp(9), dp(14), dp(9));
-        GradientDrawable onlineBg = rounded(Color.argb(190, 5, 38, 58), 22);
-        onlineBg.setStroke(dp(1), Color.argb(210, 50, 229, 242));
-        online.setBackground(onlineBg);
-        online.setContentDescription("桌宠在线，正在聆听");
-        FrameLayout.LayoutParams onlineParams = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        onlineParams.gravity = Gravity.START | Gravity.BOTTOM;
-        onlineParams.setMargins(0, 0, 0, dp(3));
-        hero.addView(online, onlineParams);
-        root.addView(hero, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(306)));
-
-        root.addView(sectionTitle("快速记录"));
+        content.addView(sectionTitle("快速操作"));
         LinearLayout actions = new LinearLayout(this);
         actions.setOrientation(LinearLayout.HORIZONTAL);
-        Button task = primaryButton("新建待办", v -> showTaskDialog());
-        Button note = secondaryButton("写笔记", v -> showNoteDialog());
-        Button voice = secondaryButton("语音唤醒", v -> toggleVoiceControl());
-        actions.addView(task, weighted());
+        actions.addView(primaryButton("新建待办", v -> showTaskDialog()), weighted());
         actions.addView(spaceHorizontal(8));
-        actions.addView(note, weighted());
-        actions.addView(spaceHorizontal(8));
-        actions.addView(voice, weighted());
-        root.addView(actions, matchWrap());
+        actions.addView(secondaryButton("写笔记", v -> showNoteDialog()), weighted());
+        content.addView(actions, matchWrap());
+        content.addView(space(8));
+        Button voice = secondaryButton("开始语音唤醒", v -> toggleVoiceControl());
+        content.addView(voice, matchWrap());
 
-        root.addView(sectionTitle("灵核运行状态"));
-        LinearLayout statusCard = card();
+        content.addView(sectionTitle("运行状态"));
+        LinearLayout status = card();
+        status.addView(text("桌宠与系统权限", 16, TEXT, true));
+        status.addView(space(7));
         permissionStatus = text("正在检查权限…", 13, TEXT_MUTED, false);
-        statusCard.addView(text("设备与权限链路", 17, TEXT, true));
-        statusCard.addView(space(8));
-        statusCard.addView(permissionStatus);
-        statusCard.addView(space(12));
+        status.addView(permissionStatus);
+        status.addView(space(13));
         petToggleButton = primaryButton("开启桌宠", v -> togglePet());
-        statusCard.addView(petToggleButton, matchWrap());
-        root.addView(statusCard, matchWrap());
+        status.addView(petToggleButton, matchWrap());
+        content.addView(status, matchWrap());
+        return scrollPage(content);
+    }
 
-        root.addView(sectionTitle("形象与个性化"));
-        root.addView(buildSkinCard(), matchWrap());
-
-        root.addView(sectionTitle("语音控制"));
-        root.addView(buildVoiceCard(), matchWrap());
-
-        root.addView(sectionTitle("待办与笔记"));
+    private View buildRecordsPage() {
+        LinearLayout content = pageContent("LOGBOOK", "待办与笔记集中在这里，首页不再堆成长列表。");
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        actions.addView(primaryButton("新建待办", v -> showTaskDialog()), weighted());
+        actions.addView(spaceHorizontal(8));
+        actions.addView(secondaryButton("新建笔记", v -> showNoteDialog()), weighted());
+        content.addView(actions, matchWrap());
+        content.addView(sectionTitle("全部记录"));
         listContainer = vertical();
-        root.addView(listContainer, matchWrap());
+        content.addView(listContainer, matchWrap());
+        return scrollPage(content);
+    }
 
-        root.addView(sectionTitle("权限与适配"));
+    private View buildCompanionPage() {
+        LinearLayout content = pageContent("COMPANION", "形象和声音只在伙伴页配置，修改后立即同步桌宠。");
+        content.addView(sectionTitle("桌宠形象"));
+        content.addView(buildSkinCard(), matchWrap());
+        content.addView(sectionTitle("语音互动"));
+        content.addView(buildVoiceCard(), matchWrap());
+        return scrollPage(content);
+    }
+
+    private View buildSettingsPage() {
+        LinearLayout content = pageContent("SYSTEM SETTINGS", "管理模型连接、系统权限与后台运行策略。");
+        content.addView(sectionTitle("模型连接"));
+        content.addView(buildModelCard(), matchWrap());
+        content.addView(sectionTitle("权限与后台"));
         LinearLayout settings = card();
         settings.addView(outlineButton("允许通知", v -> requestNotificationPermission()), matchWrap());
         settings.addView(space(8));
         settings.addView(outlineButton("允许精确提醒", v -> requestExactAlarmPermission()), matchWrap());
         settings.addView(space(8));
-        settings.addView(outlineButton(isXiaomi() ? "红米/小米自启动管理" : "打开应用系统设置",
+        settings.addView(outlineButton(isXiaomi() ? "红米 / 小米自启动管理" : "打开应用系统设置",
                 v -> openVendorSettings()), matchWrap());
         settings.addView(space(8));
         settings.addView(outlineButton("电池与后台运行设置", v -> openBatterySettings()), matchWrap());
         settings.addView(space(10));
         CheckBox autoStart = new CheckBox(this);
-        autoStart.setText("手机重启后尝试恢复桌宠");
+        autoStart.setText("手机重启后恢复桌宠");
         autoStart.setTextColor(TEXT);
         autoStart.setButtonTintList(new ColorStateList(
                 new int[][]{new int[]{android.R.attr.state_checked}, new int[]{}},
@@ -277,18 +310,83 @@ public class MainActivity extends Activity {
                 prefs.edit().putBoolean("auto_start", checked).apply());
         settings.addView(autoStart);
         TextView hint = text(isXiaomi()
-                        ? "红米提示：请同时允许“自启动”，并将省电策略设为“不限制”。不同 HyperOS 版本的名称可能略有差异。"
-                        : "如果桌宠容易消失，请在系统设置里允许自启动，并关闭针对本应用的电池限制。",
+                        ? "HyperOS 还需要允许自启动，并把省电策略设为“不限制”。"
+                        : "如果桌宠容易消失，请关闭系统对本应用的电池限制。",
                 12, TEXT_MUTED, false);
         hint.setPadding(0, dp(8), 0, 0);
         settings.addView(hint);
-        root.addView(settings, matchWrap());
+        content.addView(settings, matchWrap());
+        return scrollPage(content);
+    }
 
-        screen.addView(scroll, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        if (showStartupAnimation) screen.addView(buildStartupOverlay(), new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        return screen;
+    private LinearLayout pageContent(String title, String subtitle) {
+        LinearLayout content = vertical();
+        content.setPadding(dp(4), dp(12), dp(4), dp(24));
+        TextView eyebrow = text(title, 9, CYAN, true);
+        eyebrow.setLetterSpacing(0.14f);
+        content.addView(eyebrow);
+        content.addView(space(3));
+        content.addView(text(subtitle, 12, TEXT_MUTED, false));
+        content.addView(space(16));
+        return content;
+    }
+
+    private ScrollView scrollPage(LinearLayout content) {
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.setClipToPadding(false);
+        scroll.setVerticalScrollBarEnabled(false);
+        scroll.addView(content, matchWrap());
+        return scroll;
+    }
+
+    private View buildBottomNavigation() {
+        LinearLayout navigation = new LinearLayout(this);
+        navigation.setOrientation(LinearLayout.HORIZONTAL);
+        navigation.setGravity(Gravity.CENTER_VERTICAL);
+        navigation.setPadding(dp(5), dp(5), dp(5), dp(5));
+        GradientDrawable background = rounded(Color.argb(248, 7, 18, 34), 18);
+        background.setStroke(dp(1), Color.argb(105, 82, 151, 181));
+        navigation.setBackground(background);
+        String[] labels = {"首页\nHOME", "记录\nLOG", "伙伴\nPET", "设置\nSET"};
+        navigationButtons = new Button[labels.length];
+        for (int index = 0; index < labels.length; index++) {
+            final int pageIndex = index;
+            Button button = new Button(this);
+            button.setText(labels[index]);
+            button.setAllCaps(false);
+            button.setTextSize(11);
+            button.setGravity(Gravity.CENTER);
+            button.setMinHeight(dp(56));
+            button.setPadding(dp(3), 0, dp(3), 0);
+            button.setStateListAnimator(null);
+            button.setOnClickListener(v -> switchPage(pageIndex));
+            navigationButtons[index] = button;
+            navigation.addView(button, new LinearLayout.LayoutParams(0, dp(56), 1f));
+        }
+        return navigation;
+    }
+
+    private void switchPage(int index) {
+        if (pageHost == null || navigationButtons == null) return;
+        activePageIndex = Math.max(0, Math.min(index, pageHost.getChildCount() - 1));
+        String[] titles = {"首页", "记录", "伙伴", "设置"};
+        for (int page = 0; page < pageHost.getChildCount(); page++) {
+            pageHost.getChildAt(page).setVisibility(page == activePageIndex ? View.VISIBLE : View.GONE);
+            boolean selected = page == activePageIndex;
+            navigationButtons[page].setTextColor(selected ? CYAN : TEXT_MUTED);
+            GradientDrawable fill = rounded(selected
+                    ? Color.argb(150, 26, 66, 88) : Color.TRANSPARENT, 13);
+            navigationButtons[page].setBackground(new RippleDrawable(
+                    ColorStateList.valueOf(Color.argb(55, 50, 229, 242)), fill, null));
+            navigationButtons[page].setContentDescription(titles[page] + (selected ? "，当前页面" : ""));
+        }
+        if (pageTitle != null) pageTitle.setText(titles[activePageIndex]);
+    }
+
+    private FrameLayout.LayoutParams fullFrame() {
+        return new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
     }
 
     private FrameLayout buildStartupOverlay() {
@@ -429,9 +527,9 @@ public class MainActivity extends Activity {
     private GradientDrawable heroSurface() {
         GradientDrawable drawable = new GradientDrawable(
                 GradientDrawable.Orientation.TL_BR,
-                new int[]{Color.argb(242, 7, 29, 57), Color.argb(226, 9, 52, 83), Color.argb(236, 5, 19, 45)});
-        drawable.setCornerRadius(dp(26));
-        drawable.setStroke(dp(1), Color.argb(170, 65, 216, 238));
+                new int[]{Color.argb(248, 9, 28, 49), Color.argb(244, 11, 41, 62)});
+        drawable.setCornerRadius(dp(18));
+        drawable.setStroke(dp(1), Color.argb(115, 65, 177, 204));
         return drawable;
     }
 
@@ -562,10 +660,19 @@ public class MainActivity extends Activity {
                     .setAction(VoiceControlService.ACTION_PREVIEW_TTS));
         });
         layout.addView(previewVoice, matchWrap());
+        return layout;
+    }
 
+    private View buildModelCard() {
+        SharedPreferences prefs = getSharedPreferences("pet_settings", MODE_PRIVATE);
+        LinearLayout layout = card();
+        layout.addView(text("电脑中转服务", 16, TEXT, true));
+        layout.addView(space(5));
+        layout.addView(text("手机只保存中转地址和访问令牌，第三方 API Key 始终留在电脑端。",
+                12, TEXT_MUTED, false));
         layout.addView(space(12));
         CheckBox modelEnabled = new CheckBox(this);
-        modelEnabled.setText("启用智能对话（普通问题自动交给模型回答）");
+        modelEnabled.setText("启用智能对话");
         modelEnabled.setTextColor(TEXT);
         modelEnabled.setButtonTintList(new ColorStateList(
                 new int[][]{new int[]{android.R.attr.state_checked}, new int[]{}},
@@ -597,7 +704,7 @@ public class MainActivity extends Activity {
         });
         layout.addView(saveModel, matchWrap());
         layout.addView(space(7));
-        layout.addView(text("电脑地址仅用于开发测试；正式发布时应由应用内置云端 HTTPS 服务地址，用户无需配置。",
+        layout.addView(text("开发环境可填写局域网地址；正式发布建议使用受信任的 HTTPS 服务。",
                 12, TEXT_MUTED, false));
         return layout;
     }
@@ -949,20 +1056,16 @@ public class MainActivity extends Activity {
     private LinearLayout card() {
         LinearLayout layout = vertical();
         layout.setPadding(dp(17), dp(16), dp(17), dp(16));
-        GradientDrawable surface = new GradientDrawable(
-                GradientDrawable.Orientation.TL_BR,
-                new int[]{Color.argb(235, 10, 34, 62), Color.argb(224, 8, 25, 50)});
-        surface.setCornerRadius(dp(20));
-        surface.setStroke(dp(1), LINE);
+        GradientDrawable surface = rounded(Color.argb(246, 8, 21, 38), 16);
+        surface.setStroke(dp(1), Color.argb(95, 78, 142, 170));
         layout.setBackground(surface);
-        layout.setElevation(dp(2));
         return layout;
     }
 
     private TextView sectionTitle(String value) {
         TextView view = text(value, 17, TEXT, true);
         view.setCompoundDrawablePadding(dp(8));
-        view.setPadding(dp(2), dp(24), 0, dp(11));
+        view.setPadding(dp(2), dp(20), 0, dp(10));
         view.setLetterSpacing(0.03f);
         return view;
     }

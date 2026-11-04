@@ -9,6 +9,7 @@ let startupTimers = [];
 let bootFrame = 0;
 let bootAudioContext;
 let bootAudioSources = [];
+let bootAudioGraph;
 let soundEnabled = localStorage.getItem("feiwuBootSound") !== "off";
 
 function notify(message) {
@@ -30,6 +31,10 @@ function stopBootAudio() {
     try { source.stop(); } catch { /* source already stopped */ }
   });
   bootAudioSources = [];
+  if (bootAudioGraph) {
+    try { bootAudioGraph.compressor.disconnect(); } catch { /* graph already disconnected */ }
+    bootAudioGraph = null;
+  }
 }
 
 function syncSoundControls() {
@@ -41,7 +46,8 @@ function syncSoundControls() {
       if (selector === "#startupSound") {
         button.lastChild.textContent = soundEnabled ? onLabel : offLabel;
       } else {
-        button.textContent = soundEnabled ? onLabel : offLabel;
+        const label = button.querySelector(".action-label");
+        if (label) label.textContent = soundEnabled ? onLabel : offLabel;
       }
     });
 }
@@ -56,22 +62,91 @@ async function getBootAudioContext() {
   return bootAudioContext;
 }
 
-function bootTone(context, start, duration, fromFrequency, toFrequency, volume, type = "sine") {
+function createBootAudioGraph(context) {
+  const input = context.createGain();
+  const dry = context.createGain();
+  const reverb = context.createConvolver();
+  const wet = context.createGain();
+  const master = context.createGain();
+  const compressor = context.createDynamicsCompressor();
+  const impulseLength = Math.ceil(context.sampleRate * 1.45);
+  const impulse = context.createBuffer(2, impulseLength, context.sampleRate);
+
+  for (let channel = 0; channel < impulse.numberOfChannels; channel += 1) {
+    const data = impulse.getChannelData(channel);
+    for (let index = 0; index < data.length; index += 1) {
+      const decay = Math.pow(1 - index / data.length, 3.4);
+      data[index] = (Math.random() * 2 - 1) * decay;
+    }
+  }
+
+  reverb.buffer = impulse;
+  dry.gain.value = .92;
+  wet.gain.value = .16;
+  master.gain.value = .72;
+  compressor.threshold.value = -18;
+  compressor.knee.value = 12;
+  compressor.ratio.value = 5;
+  compressor.attack.value = .004;
+  compressor.release.value = .2;
+
+  input.connect(dry).connect(master);
+  input.connect(reverb).connect(wet).connect(master);
+  master.connect(compressor).connect(context.destination);
+  return { input, compressor };
+}
+
+function connectBootVoice(context, source, output, graph, start, duration, panFrom = 0, panTo = panFrom) {
+  if (context.createStereoPanner) {
+    const panner = context.createStereoPanner();
+    panner.pan.setValueAtTime(Math.max(-1, Math.min(1, panFrom)), start);
+    panner.pan.linearRampToValueAtTime(Math.max(-1, Math.min(1, panTo)), start + duration);
+    source.connect(output).connect(panner).connect(graph.input);
+  } else {
+    source.connect(output).connect(graph.input);
+  }
+}
+
+function bootTone(context, graph, options) {
+  const {
+    start, duration, from, to = from, volume, type = "sine", attack = .025,
+    release = .16, panFrom = 0, panTo = panFrom, filterFrom = 0, filterTo = filterFrom,
+    detune = 0,
+  } = options;
   const oscillator = context.createOscillator();
   const gain = context.createGain();
   oscillator.type = type;
-  oscillator.frequency.setValueAtTime(fromFrequency, start);
-  oscillator.frequency.exponentialRampToValueAtTime(Math.max(1, toFrequency), start + duration);
+  oscillator.detune.value = detune;
+  oscillator.frequency.setValueAtTime(Math.max(1, from), start);
+  oscillator.frequency.exponentialRampToValueAtTime(Math.max(1, to), start + duration);
   gain.gain.setValueAtTime(.0001, start);
-  gain.gain.exponentialRampToValueAtTime(volume, start + Math.min(.06, duration * .25));
+  gain.gain.exponentialRampToValueAtTime(volume, start + Math.min(attack, duration * .35));
+  gain.gain.setValueAtTime(Math.max(.0001, volume * .72), start + Math.max(attack, duration - release));
   gain.gain.exponentialRampToValueAtTime(.0001, start + duration);
-  oscillator.connect(gain).connect(context.destination);
+
+  if (filterFrom > 0) {
+    const filter = context.createBiquadFilter();
+    filter.type = "lowpass";
+    filter.Q.value = 1.2;
+    filter.frequency.setValueAtTime(filterFrom, start);
+    filter.frequency.exponentialRampToValueAtTime(Math.max(1, filterTo), start + duration);
+    oscillator.connect(filter);
+    connectBootVoice(context, filter, gain, graph, start, duration, panFrom, panTo);
+  } else {
+    connectBootVoice(context, oscillator, gain, graph, start, duration, panFrom, panTo);
+  }
+
   oscillator.start(start);
   oscillator.stop(start + duration + .03);
   bootAudioSources.push(oscillator);
 }
 
-function bootNoise(context, start, duration, volume, highpass = 500) {
+function bootNoise(context, graph, options) {
+  const {
+    start, duration, volume, filterType = "bandpass", filterFrom = 400,
+    filterTo = filterFrom, q = 1.4, attack = .025, release = .18,
+    panFrom = 0, panTo = panFrom,
+  } = options;
   const length = Math.ceil(context.sampleRate * duration);
   const buffer = context.createBuffer(1, length, context.sampleRate);
   const data = buffer.getChannelData(0);
@@ -80,15 +155,36 @@ function bootNoise(context, start, duration, volume, highpass = 500) {
   const filter = context.createBiquadFilter();
   const gain = context.createGain();
   source.buffer = buffer;
-  filter.type = "highpass";
-  filter.frequency.value = highpass;
+  filter.type = filterType;
+  filter.Q.value = q;
+  filter.frequency.setValueAtTime(Math.max(1, filterFrom), start);
+  filter.frequency.exponentialRampToValueAtTime(Math.max(1, filterTo), start + duration);
   gain.gain.setValueAtTime(.0001, start);
-  gain.gain.exponentialRampToValueAtTime(volume, start + .025);
+  gain.gain.exponentialRampToValueAtTime(volume, start + Math.min(attack, duration * .35));
+  gain.gain.setValueAtTime(Math.max(.0001, volume * .62), start + Math.max(attack, duration - release));
   gain.gain.exponentialRampToValueAtTime(.0001, start + duration);
-  source.connect(filter).connect(gain).connect(context.destination);
+  source.connect(filter);
+  connectBootVoice(context, filter, gain, graph, start, duration, panFrom, panTo);
   source.start(start);
   source.stop(start + duration + .02);
   bootAudioSources.push(source);
+}
+
+function bootDataBurst(context, graph, start, frequency, pan) {
+  [0, .075, .15, .255].forEach((offset, index) => {
+    bootTone(context, graph, {
+      start: start + offset,
+      duration: index === 3 ? .14 : .07,
+      from: frequency * (1 + index * .18),
+      to: frequency * (1.16 + index * .2),
+      volume: index === 3 ? .035 : .024,
+      type: index % 2 ? "triangle" : "sine",
+      attack: .008,
+      release: .05,
+      panFrom: pan,
+      panTo: Math.min(1, pan + .22),
+    });
+  });
 }
 
 async function playBootAudio() {
@@ -96,21 +192,109 @@ async function playBootAudio() {
   const context = await getBootAudioContext();
   if (!context) return;
   stopBootAudio();
-  const start = context.currentTime + .035;
-  bootTone(context, start, 5.8, 52, 30, .035, "sawtooth");
-  bootTone(context, start + .08, 1.05, 84, 164, .055, "sine");
-  [0.72, 1.56, 2.46, 3.38, 4.36].forEach((offset, index) => {
-    bootTone(context, start + offset, .12, 620 + index * 110, 1180 + index * 150, .045, "square");
-    bootNoise(context, start + offset, .09, .018, 1500);
+  const graph = createBootAudioGraph(context);
+  bootAudioGraph = graph;
+  const start = context.currentTime + .04;
+
+  // Core ignition: a controlled sub layer and filtered air intake establish scale.
+  bootTone(context, graph, {
+    start, duration: 5.95, from: 46, to: 29, volume: .038, type: "sawtooth",
+    attack: .5, release: .9, filterFrom: 150, filterTo: 72,
   });
-  bootTone(context, start + 2.05, 1.2, 190, 1800, .035, "sine");
-  bootTone(context, start + 3.34, .66, 110, 520, .06, "triangle");
-  bootNoise(context, start + 4.32, .48, .06, 260);
-  bootTone(context, start + 4.32, .72, 72, 38, .11, "sine");
-  [220, 330, 440, 660].forEach((frequency, index) => {
-    bootTone(context, start + 4.48 + index * .055, 1.05, frequency, frequency * 1.5, .04, "sine");
+  bootTone(context, graph, {
+    start: start + .04, duration: 1.28, from: 58, to: 174, volume: .1,
+    attack: .12, release: .3, type: "sine", filterFrom: 180, filterTo: 1100,
   });
-  bootTone(context, start + 5.25, .75, 880, 1320, .035, "sine");
+  bootNoise(context, graph, {
+    start: start + .02, duration: 1.34, volume: .04, filterFrom: 240, filterTo: 2600,
+    q: .8, attack: .18, release: .4, panFrom: -.25, panTo: .25,
+  });
+
+  // Diagnostic scan: short positional pulses mirror the targeting rings.
+  [
+    [.72, 620, -0.72, -0.2],
+    [1.56, 840, .65, .12],
+  ].forEach(([offset, frequency, panFrom, panTo]) => {
+    bootTone(context, graph, {
+      start: start + offset, duration: .24, from: frequency, to: frequency * 1.7,
+      volume: .055, type: "triangle", attack: .012, release: .13, panFrom, panTo,
+    });
+    bootNoise(context, graph, {
+      start: start + offset, duration: .2, volume: .018, filterType: "highpass",
+      filterFrom: 1700, filterTo: 5200, q: .7, attack: .008, release: .12,
+      panFrom, panTo,
+    });
+  });
+  bootDataBurst(context, graph, start + 1.72, 1160, -.32);
+
+  // Relay acquisition: a wide rising sweep travels across the stereo field.
+  bootNoise(context, graph, {
+    start: start + 2.08, duration: 1.22, volume: .055, filterFrom: 180, filterTo: 4800,
+    q: 2.4, attack: .18, release: .24, panFrom: -.9, panTo: .9,
+  });
+  bootTone(context, graph, {
+    start: start + 2.34, duration: 1.08, from: 126, to: 980, volume: .05,
+    type: "sawtooth", attack: .12, release: .22, filterFrom: 260, filterTo: 3400,
+    panFrom: -.75, panTo: .75,
+  });
+  bootDataBurst(context, graph, start + 2.52, 720, -.5);
+
+  // Provider lock: denser pulses create acceleration before the central impact.
+  bootTone(context, graph, {
+    start: start + 3.28, duration: .94, from: 92, to: 740, volume: .075,
+    type: "triangle", attack: .08, release: .17, filterFrom: 190, filterTo: 2600,
+  });
+  bootDataBurst(context, graph, start + 3.4, 980, .22);
+  bootDataBurst(context, graph, start + 3.8, 1320, -.12);
+
+  // Core impact: transient crack, low-frequency drop, then a spacious resolved chord.
+  bootNoise(context, graph, {
+    start: start + 4.31, duration: .46, volume: .12, filterFrom: 280, filterTo: 92,
+    q: .72, attack: .006, release: .38,
+  });
+  bootNoise(context, graph, {
+    start: start + 4.31, duration: .22, volume: .05, filterType: "highpass",
+    filterFrom: 2200, filterTo: 7200, q: .6, attack: .003, release: .18,
+  });
+  bootTone(context, graph, {
+    start: start + 4.3, duration: .92, from: 92, to: 32, volume: .19,
+    type: "sine", attack: .01, release: .68,
+  });
+  bootTone(context, graph, {
+    start: start + 4.33, duration: .44, from: 1380, to: 310, volume: .048,
+    type: "square", attack: .004, release: .32, filterFrom: 4200, filterTo: 900,
+  });
+
+  [73.42, 110, 164.81, 293.66].forEach((frequency, index) => {
+    bootTone(context, graph, {
+      start: start + 4.48 + index * .035,
+      duration: 1.28,
+      from: frequency,
+      to: frequency * 1.015,
+      volume: index === 0 ? .055 : .03,
+      type: index < 2 ? "sine" : "triangle",
+      attack: .14,
+      release: .62,
+      panFrom: (index - 1.5) * .28,
+      panTo: (index - 1.5) * .18,
+      detune: index % 2 ? 4 : -4,
+    });
+  });
+
+  // Completion signature: bright but soft, leaving a clean tail as the UI appears.
+  bootTone(context, graph, {
+    start: start + 5.24, duration: .74, from: 660, to: 1320, volume: .043,
+    type: "sine", attack: .025, release: .42, panFrom: -.2, panTo: .28,
+  });
+  bootTone(context, graph, {
+    start: start + 5.39, duration: .66, from: 990, to: 1760, volume: .028,
+    type: "triangle", attack: .02, release: .42, panFrom: .28, panTo: -.08,
+  });
+  bootNoise(context, graph, {
+    start: start + 5.24, duration: .76, volume: .018, filterType: "highpass",
+    filterFrom: 4200, filterTo: 8800, q: .8, attack: .06, release: .5,
+    panFrom: -.4, panTo: .4,
+  });
 }
 
 function startBootParticles(duration = 6600) {
@@ -382,7 +566,7 @@ async function testConnection(trigger) {
   } finally {
     buttons.forEach((button) => { button.disabled = false; });
     $("#testButton").textContent = "测试模型连接";
-    $("#testButtonBottom").textContent = "测试链路";
+    $("#testButtonBottom").textContent = "运行连接测试";
   }
 }
 
