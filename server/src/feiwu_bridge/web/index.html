@@ -3,139 +3,179 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>费雾 · 模型中转台</title>
+  <meta name="theme-color" content="#030817">
+  <title>费雾中转站 · 深海灵核控制台</title>
   <link rel="stylesheet" href="/admin/assets/styles.css">
 </head>
 <body>
-  <div class="ambient ambient-one"></div>
-  <div class="ambient ambient-two"></div>
-  <main class="shell">
-    <header class="topbar">
-      <div class="brand">
-        <div class="mark" aria-hidden="true"><span></span><span></span></div>
-        <div>
-          <p class="eyebrow">FEIWU BRIDGE</p>
-          <h1>模型中转台</h1>
+  <a class="skip-link" href="#mainContent">跳到主要内容</a>
+
+  <div class="startup is-awaiting" id="startupScreen" aria-label="费雾灵核启动序列">
+    <canvas class="boot-particles" id="bootParticles" aria-hidden="true"></canvas>
+    <div class="boot-grid" aria-hidden="true"></div>
+    <div class="boot-scanlines" aria-hidden="true"></div>
+    <div class="boot-flash" aria-hidden="true"></div>
+    <div class="boot-vignette" aria-hidden="true"></div>
+
+    <div class="boot-chrome boot-chrome-top" aria-hidden="true">
+      <span>FEIWU / DEEPSEA RELAY</span><i></i><b>SECURE BOOT SEQUENCE</b>
+    </div>
+    <div class="boot-chrome boot-chrome-bottom" aria-hidden="true">
+      <span>NODE 127.0.0.1</span><i></i><b id="bootClock">00:00:00:000</b>
+    </div>
+
+    <div class="boot-controls">
+      <button class="startup-sound" id="startupSound" type="button" aria-pressed="true"><span></span>音效 开</button>
+      <button class="startup-skip" id="skipStartup" type="button">跳过序列</button>
+    </div>
+
+    <div class="boot-stage" aria-hidden="true">
+      <div class="boot-readout boot-readout-left">
+        <small>SYSTEM DIAGNOSTIC</small>
+        <p id="bootLogLeft">CORE BUS ........ STANDBY</p>
+        <p>MEMORY GRID ...... <b>128 TB</b></p>
+        <p>SECURE ENCLAVE ... <b>LOCKED</b></p>
+      </div>
+      <div class="boot-readout boot-readout-right">
+        <small>SPATIAL TELEMETRY</small>
+        <p id="bootLogRight">VECTOR ........... 000.00</p>
+        <p>DEPTH ............ <b>7,600 M</b></p>
+        <p>SIGNAL ........... <b>ENCRYPTED</b></p>
+      </div>
+
+      <div class="target-lock">
+        <div class="target-cross cross-x"></div>
+        <div class="target-cross cross-y"></div>
+        <div class="target-ring ring-outer"><i></i><i></i><i></i><i></i></div>
+        <div class="target-ring ring-mid"></div>
+        <div class="target-ring ring-inner"></div>
+        <div class="scan-blade"></div>
+        <div class="reactor-core"><i></i><b></b><span></span></div>
+        <div class="energy-wave wave-one"></div>
+        <div class="energy-wave wave-two"></div>
+        <div class="lock-coordinate coordinate-x">X 041.77</div>
+        <div class="lock-coordinate coordinate-y">Y 127.03</div>
+      </div>
+
+      <div class="boot-chain">
+        <div class="boot-node" data-node="client"><i></i><span>ANDROID</span><small>CLIENT SENSE</small></div>
+        <div class="boot-link"><i></i></div>
+        <div class="boot-node boot-node-core" data-node="relay"><i></i><span>FEIWU CORE</span><small>LOCAL RELAY</small></div>
+        <div class="boot-link"><i></i></div>
+        <div class="boot-node" data-node="provider"><i></i><span>MODEL</span><small>PROVIDER LINK</small></div>
+      </div>
+    </div>
+
+    <div class="boot-copy">
+      <p class="startup-kicker">DEEPSEA NEURAL OPERATING SYSTEM</p>
+      <h2 class="startup-stage" id="startupStage" aria-live="polite">等待灵核点火</h2>
+      <p class="startup-detail" id="startupDetail">PRESS TO IGNITE · AUDIO VISUAL SEQUENCE</p>
+      <div class="startup-progress" aria-hidden="true"><i id="startupProgress"></i><span></span></div>
+      <div class="progress-segments" id="progressSegments" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+    </div>
+
+    <button class="ignite-button" id="igniteStartup" type="button">
+      <span class="ignite-rings" aria-hidden="true"><i></i><i></i></span>
+      <b>启动灵核</b><small>点击开启完整声画序列</small>
+    </button>
+  </div>
+
+  <div class="deepsea" aria-hidden="true">
+    <div class="mesh mesh-one"></div>
+    <div class="mesh mesh-two"></div>
+    <div class="current current-one"></div>
+    <div class="current current-two"></div>
+    <div class="particle-field"></div>
+  </div>
+
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="主导航">
+      <div class="brand-lockup">
+        <div class="brand-mark" aria-hidden="true"><span></span><span></span></div>
+        <div><strong>费雾中转站</strong><small>DEEPSEA CORE</small></div>
+      </div>
+      <nav>
+        <a class="nav-item active" href="#overview" aria-current="page"><span class="nav-icon">⌂</span>总览</a>
+        <a class="nav-item" href="#provider"><span class="nav-icon">◇</span>模型配置</a>
+        <a class="nav-item" href="#telemetry"><span class="nav-icon">⌁</span>调用监控</a>
+        <a class="nav-item" href="#timeline"><span class="nav-icon">◌</span>服务时间线</a>
+        <a class="nav-item" href="#security"><span class="nav-icon">⬡</span>安全设置</a>
+      </nav>
+      <div class="sidebar-foot"><span class="pulse-dot"></span><div><b>本机安全模式</b><small>管理接口仅限本机</small></div></div>
+    </aside>
+
+    <main class="workspace" id="mainContent">
+      <header class="topbar">
+        <div><p class="eyebrow">RELAY SERVICE ADMIN CONSOLE</p><h1>深海灵核控制台</h1></div>
+        <div class="topbar-actions">
+          <button class="ghost-button" id="toggleBootSound" type="button" aria-pressed="true">启动音效：开</button>
+          <button class="ghost-button" id="replayStartup" type="button">重播启动序列</button>
+          <div class="status-pill" id="serviceStatus" role="status"><span class="status-dot"></span><span>正在检查服务</span></div>
         </div>
-      </div>
-      <div class="status-pill" id="serviceStatus">
-        <span class="status-dot"></span>
-        <span>正在检查服务</span>
-      </div>
-    </header>
+      </header>
 
-    <section class="hero">
-      <div>
-        <p class="eyebrow">电脑端控制面板</p>
-        <h2>模型可以换，<br><em>安卓端不用动。</em></h2>
-        <p class="hero-copy">在这里管理第三方模型、接口地址与密钥。手机始终只连接费雾中转服务。</p>
-      </div>
-      <div class="route-card" aria-label="请求链路">
-        <div class="route-node"><b>01</b><span>安卓桌宠</span></div>
-        <div class="route-line"><i></i></div>
-        <div class="route-node active"><b>02</b><span>费雾中转</span></div>
-        <div class="route-line"><i></i></div>
-        <div class="route-node"><b>03</b><span>第三方模型</span></div>
-      </div>
-    </section>
-
-    <section class="grid">
-      <article class="panel config-panel">
-        <div class="panel-heading">
-          <div>
-            <p class="eyebrow">PROVIDER</p>
-            <h3>模型服务配置</h3>
-          </div>
-          <span class="key-badge" id="keyBadge">密钥状态未知</span>
+      <section class="overview" id="overview">
+        <div class="overview-heading">
+          <div><p class="eyebrow">SYSTEM TOPOLOGY</p><h2><span class="health-icon">✓</span> 灵核链路运行正常</h2><p>安卓端只连接费雾中转节点，第三方密钥始终留在这台电脑。</p></div>
+          <div class="core-avatar" aria-label="费雾系统状态：在线"><img src="/admin/assets/skin_mist_blob.png" alt="费雾雾狐"><span></span></div>
         </div>
+        <div class="topology" aria-label="安卓端到中转节点再到模型服务的请求链路">
+          <div class="topology-node endpoint-node"><span class="node-icon android-icon" aria-hidden="true"></span><div><small>CLIENT</small><strong>安卓端</strong><em>局域网设备</em></div></div>
+          <div class="flow-line"><i></i><i></i><i></i></div>
+          <div class="topology-node core-node"><span class="cube-icon" aria-hidden="true"><b></b></span><div><small>CORE</small><strong>中转节点</strong><em>安全转发</em></div></div>
+          <div class="flow-line"><i></i><i></i><i></i></div>
+          <div class="topology-node endpoint-node"><span class="stack-icon" aria-hidden="true"></span><div><small>PROVIDER</small><strong>模型服务</strong><em id="providerSummary">等待配置</em></div></div>
+        </div>
+      </section>
 
-        <form id="configForm">
-          <label>
-            <span>服务预设</span>
-            <select id="providerPreset">
-              <option value="deepseek">DeepSeek 官方 API</option>
-              <option value="custom">其他 OpenAI 兼容服务</option>
-            </select>
-          </label>
+      <section class="telemetry" id="telemetry" aria-label="服务运行指标">
+        <article class="metric-card"><span class="metric-icon">ϟ</span><div><small>健康检查延迟</small><strong id="healthLatency">-- <em>ms</em></strong></div><div class="sparkline" aria-hidden="true"><i></i></div></article>
+        <article class="metric-card"><span class="metric-icon">◎</span><div><small>中转服务</small><strong id="relayState">检查中</strong></div><div class="bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div></article>
+        <article class="metric-card"><span class="metric-icon">⬡</span><div><small>供应商配置</small><strong id="providerState">待读取</strong></div><span class="verified-label">本机加密</span></article>
+      </section>
 
-          <div class="field-row">
-            <label>
-              <span>API 基础地址</span>
-              <input id="baseUrl" type="url" required placeholder="https://api.deepseek.com">
-            </label>
-            <label>
-              <span>对话路径</span>
-              <input id="chatPath" type="text" required placeholder="/chat/completions">
-            </label>
-          </div>
-
-          <label>
-            <span>模型名称</span>
-            <input id="modelName" type="text" list="deepseekModels" required placeholder="deepseek-flash">
-            <datalist id="deepseekModels">
-              <option value="deepseek-flash"></option>
-              <option value="deepseek-v4-pro"></option>
-            </datalist>
-            <small>可直接输入服务商支持的其他模型名。</small>
-          </label>
-
-          <label>
-            <span>第三方 API Key</span>
-            <div class="secret-field">
-              <input id="apiKey" type="password" autocomplete="new-password" placeholder="留空表示保持当前密钥">
-              <button class="icon-button" id="toggleKey" type="button" aria-label="显示或隐藏密钥">显示</button>
+      <section class="content-grid">
+        <article class="panel config-panel" id="provider">
+          <div class="panel-heading"><div><p class="eyebrow">PROVIDER CONFIGURATION</p><h2>模型服务配置</h2></div><span class="key-badge" id="keyBadge">密钥状态未知</span></div>
+          <form id="configForm">
+            <label><span>服务预设</span><select id="providerPreset"><option value="deepseek">DeepSeek 官方 API</option><option value="custom">其他 OpenAI 兼容服务</option></select></label>
+            <div class="field-row">
+              <label><span>API 基础地址</span><input id="baseUrl" type="url" required placeholder="https://api.deepseek.com"></label>
+              <label><span>对话路径</span><input id="chatPath" type="text" required placeholder="/chat/completions"></label>
             </div>
-            <small>保存后经过加密写入电脑本地，页面不会再次读取原始值。</small>
-          </label>
-
-          <label class="check-row">
-            <input id="clearKey" type="checkbox">
-            <span>清除当前已保存的 API Key</span>
-          </label>
-
-          <div class="actions">
-            <button class="button primary" type="submit">保存并应用</button>
-            <button class="button secondary" id="testButton" type="button">测试模型连接</button>
-          </div>
-        </form>
-      </article>
-
-      <aside class="side-stack">
-        <article class="panel compact-panel">
-          <p class="eyebrow">ANDROID</p>
-          <h3>手机连接信息</h3>
-          <p>把下面地址和 <code>FEIWU_CLIENT_TOKEN</code> 填入安卓端智能对话设置。</p>
-          <div class="copy-box">
-            <code id="phoneEndpoint">http://电脑局域网IP:8765</code>
-            <button id="copyEndpoint" type="button">复制</button>
-          </div>
-          <p class="hint">若这里显示 localhost，请换成电脑的 IPv4 局域网地址。</p>
+            <label><span>模型名称</span><input id="modelName" type="text" list="deepseekModels" required placeholder="deepseek-flash"><datalist id="deepseekModels"><option value="deepseek-flash"></option><option value="deepseek-v4-pro"></option></datalist><small>可直接输入服务商支持的其他模型名。</small></label>
+            <label><span>第三方 API Key</span><div class="secret-field"><input id="apiKey" type="password" autocomplete="new-password" placeholder="留空表示保持当前密钥"><button class="icon-button" id="toggleKey" type="button" aria-label="显示或隐藏密钥">显示</button></div><small>保存后加密写入电脑本地，页面不会再次读取原始值。</small></label>
+            <label class="check-row"><input id="clearKey" type="checkbox"><span>清除当前已保存的 API Key</span></label>
+            <div class="actions"><button class="button primary" type="submit">保存并应用</button><button class="button secondary" id="testButton" type="button">测试模型连接</button></div>
+          </form>
         </article>
 
-        <article class="panel compact-panel security-panel">
-          <p class="eyebrow">SECURITY</p>
-          <h3>密钥边界</h3>
-          <ul>
-            <li><span>第三方 API Key</span><b>只留在电脑</b></li>
-            <li><span>管理令牌</span><b>只用于此网页</b></li>
-            <li><span>手机访问令牌</span><b>可随时更换</b></li>
-          </ul>
-        </article>
-      </aside>
-    </section>
-  </main>
+        <aside class="side-stack">
+          <article class="panel compact-panel" id="timeline">
+            <div class="panel-heading compact-heading"><div><p class="eyebrow">ENDPOINT</p><h2>手机服务地址</h2></div><span class="mini-state"><i></i>可用</span></div>
+            <p>将地址和 <code>FEIWU_CLIENT_TOKEN</code> 填入安卓端的智能对话设置。</p>
+            <div class="copy-box"><code id="phoneEndpoint">http://电脑局域网IP:8765</code><button id="copyEndpoint" type="button">复制地址</button></div>
+            <p class="hint">若显示 localhost，请替换为电脑的 IPv4 局域网地址。</p>
+          </article>
+          <article class="panel compact-panel" id="security">
+            <p class="eyebrow">SECURITY BOUNDARY</p><h2>密钥边界</h2>
+            <ul class="security-list"><li><span><i></i>第三方 API Key</span><b>仅电脑保存</b></li><li><span><i></i>管理令牌</span><b>仅当前标签页</b></li><li><span><i></i>手机访问令牌</span><b>独立且可更换</b></li></ul>
+          </article>
+        </aside>
+      </section>
+
+      <section class="test-strip"><div><p class="eyebrow">LINK DIAGNOSTIC</p><h2>测试灵核链路</h2><p>发送一次真实请求，验证中转节点与当前模型服务是否连通。</p></div><div class="test-strip-result"><span id="linkDiagnostic">等待测试</span><button class="button primary" id="testButtonBottom" type="button">测试链路</button></div></section>
+    </main>
+  </div>
 
   <div class="login-layer" id="loginLayer" hidden>
     <form class="login-card" id="loginForm">
-      <p class="eyebrow">LOCAL ADMIN</p>
-      <h2>进入模型中转台</h2>
-      <p>请输入电脑端 <code>FEIWU_ADMIN_TOKEN</code>。令牌只保留在当前浏览器标签页。</p>
-      <input id="adminToken" type="password" autocomplete="current-password" required placeholder="管理令牌">
-      <button class="button primary" type="submit">验证并进入</button>
-      <p class="form-message" id="loginMessage"></p>
+      <div class="login-glyph" aria-hidden="true"><i></i><i></i></div>
+      <p class="eyebrow">LOCAL ADMIN VERIFICATION</p><h2>进入深海灵核控制台</h2><p>请输入电脑端 <code>FEIWU_ADMIN_TOKEN</code>。令牌只保留在当前浏览器标签页。</p>
+      <label><span>管理令牌</span><input id="adminToken" type="password" autocomplete="current-password" required placeholder="输入本机管理令牌"></label>
+      <button class="button primary" type="submit">验证并进入</button><p class="form-message" id="loginMessage" role="alert"></p>
     </form>
   </div>
-
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <script src="/admin/assets/app.js" defer></script>
 </body>

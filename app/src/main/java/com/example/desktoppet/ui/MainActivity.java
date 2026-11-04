@@ -10,22 +10,28 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.res.ColorStateList;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.RippleDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.provider.Settings;
 import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.Window;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.SeekBar;
@@ -35,6 +41,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 import android.widget.AdapterView;
 
+import com.example.desktoppet.R;
 import com.example.desktoppet.data.AppDatabase;
 import com.example.desktoppet.feature.pet.PetOverlayService;
 import com.example.desktoppet.feature.pet.SkinCatalog;
@@ -54,9 +61,15 @@ public class MainActivity extends Activity {
     private static final int REQUEST_NOTIFICATIONS = 2001;
     private static final int REQUEST_MICROPHONE = 2002;
     private static final int REQUEST_CUSTOM_SKIN = 2003;
-    private static final int ORANGE = Color.rgb(255, 138, 52);
-    private static final int CREAM = Color.rgb(255, 248, 237);
-    private static final int TEXT = Color.rgb(61, 49, 43);
+    private static final int DEEP_NAVY = Color.rgb(3, 8, 23);
+    private static final int SURFACE = Color.rgb(9, 28, 54);
+    private static final int SURFACE_HIGH = Color.rgb(13, 42, 72);
+    private static final int CYAN = Color.rgb(50, 229, 242);
+    private static final int COBALT = Color.rgb(75, 109, 255);
+    private static final int SIGNAL = Color.rgb(183, 255, 69);
+    private static final int TEXT = Color.rgb(239, 248, 255);
+    private static final int TEXT_MUTED = Color.rgb(169, 195, 214);
+    private static final int LINE = Color.argb(125, 70, 205, 231);
 
     private AppDatabase db;
     private LinearLayout listContainer;
@@ -65,15 +78,28 @@ public class MainActivity extends Activity {
     private Button voiceToggleButton;
     private ImageView skinPreview;
     private TextView skinDescription;
+    private final Handler startupHandler = new Handler(Looper.getMainLooper());
+    private FrameLayout startupOverlay;
+    private TextView startupStage;
+    private TextView startupDetail;
+    private ImageView startupMascot;
+    private boolean showStartupAnimation;
     private boolean quickAddHandled;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        Window window = getWindow();
+        window.setStatusBarColor(DEEP_NAVY);
+        window.setNavigationBarColor(DEEP_NAVY);
+        window.getDecorView().setSystemUiVisibility(0);
         db = new AppDatabase(this);
         AlarmReceiver.ensureChannel(this);
+        showStartupAnimation = savedInstanceState == null &&
+                !getIntent().getBooleanExtra(EXTRA_QUICK_ADD, false);
         setContentView(buildScreen());
         refreshList();
+        if (showStartupAnimation) startStartupSequence();
         handleQuickAdd(getIntent());
     }
 
@@ -101,6 +127,7 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        startupHandler.removeCallbacksAndMessages(null);
         db.close();
         super.onDestroy();
     }
@@ -139,28 +166,77 @@ public class MainActivity extends Activity {
     }
 
     private View buildScreen() {
+        FrameLayout screen = new FrameLayout(this);
+        screen.setBackgroundColor(DEEP_NAVY);
+        screen.addView(new DeepSeaBackdropView(this), new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
-        scroll.setBackgroundColor(CREAM);
+        scroll.setBackgroundColor(Color.TRANSPARENT);
+        scroll.setClipToPadding(false);
+        scroll.setVerticalScrollBarEnabled(false);
         LinearLayout root = vertical();
-        root.setPadding(dp(18), dp(18), dp(18), dp(40));
+        root.setPadding(dp(16), dp(18), dp(16), dp(48));
         scroll.addView(root, matchWrap());
 
-        LinearLayout hero = vertical();
-        hero.setPadding(dp(20), dp(20), dp(20), dp(18));
-        hero.setBackground(rounded(ORANGE, 24));
-        TextView title = text("费雾", 28, Color.WHITE, true);
-        TextView subtitle = text("会陪伴、记待办，也会准时提醒你的安卓桌宠", 14,
-                Color.argb(225, 255, 255, 255), false);
-        hero.addView(title);
-        hero.addView(space(5));
-        hero.addView(subtitle);
-        root.addView(hero, matchWrap());
+        FrameLayout hero = new FrameLayout(this);
+        hero.setPadding(dp(20), dp(18), dp(20), dp(18));
+        hero.setBackground(heroSurface());
 
-        root.addView(space(14));
+        LinearLayout heroCopy = vertical();
+        heroCopy.addView(text("FEIWU · DEEPSEA CORE", 10, CYAN, true));
+        heroCopy.addView(space(5));
+        heroCopy.addView(text("费雾", 25, TEXT, true));
+        heroCopy.addView(space(16));
+        heroCopy.addView(text(greeting(), 32, TEXT, true));
+        heroCopy.addView(space(5));
+        heroCopy.addView(text("灵核已连接，随时听候你的声音", 13, TEXT_MUTED, false));
+        FrameLayout.LayoutParams copyParams = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        copyParams.gravity = Gravity.START | Gravity.TOP;
+        hero.addView(heroCopy, copyParams);
+
+        ImageView heroMascot = new ImageView(this);
+        heroMascot.setImageResource(R.drawable.skin_mist_blob);
+        heroMascot.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        heroMascot.setContentDescription("费雾雾狐桌宠");
+        FrameLayout.LayoutParams mascotParams = new FrameLayout.LayoutParams(dp(225), dp(225));
+        mascotParams.gravity = Gravity.END | Gravity.BOTTOM;
+        mascotParams.setMargins(0, dp(54), dp(-24), dp(24));
+        hero.addView(heroMascot, mascotParams);
+
+        TextView online = text("●  桌宠在线 · 正在聆听", 13, TEXT, true);
+        online.setPadding(dp(14), dp(9), dp(14), dp(9));
+        GradientDrawable onlineBg = rounded(Color.argb(190, 5, 38, 58), 22);
+        onlineBg.setStroke(dp(1), Color.argb(210, 50, 229, 242));
+        online.setBackground(onlineBg);
+        online.setContentDescription("桌宠在线，正在聆听");
+        FrameLayout.LayoutParams onlineParams = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        onlineParams.gravity = Gravity.START | Gravity.BOTTOM;
+        onlineParams.setMargins(0, 0, 0, dp(3));
+        hero.addView(online, onlineParams);
+        root.addView(hero, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(306)));
+
+        root.addView(sectionTitle("快速记录"));
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        Button task = primaryButton("新建待办", v -> showTaskDialog());
+        Button note = secondaryButton("写笔记", v -> showNoteDialog());
+        Button voice = secondaryButton("语音唤醒", v -> toggleVoiceControl());
+        actions.addView(task, weighted());
+        actions.addView(spaceHorizontal(8));
+        actions.addView(note, weighted());
+        actions.addView(spaceHorizontal(8));
+        actions.addView(voice, weighted());
+        root.addView(actions, matchWrap());
+
+        root.addView(sectionTitle("灵核运行状态"));
         LinearLayout statusCard = card();
-        permissionStatus = text("正在检查权限…", 14, TEXT, false);
-        statusCard.addView(text("运行状态", 18, TEXT, true));
+        permissionStatus = text("正在检查权限…", 13, TEXT_MUTED, false);
+        statusCard.addView(text("设备与权限链路", 17, TEXT, true));
         statusCard.addView(space(8));
         statusCard.addView(permissionStatus);
         statusCard.addView(space(12));
@@ -170,16 +246,6 @@ public class MainActivity extends Activity {
 
         root.addView(sectionTitle("形象与个性化"));
         root.addView(buildSkinCard(), matchWrap());
-
-        root.addView(sectionTitle("快速记录"));
-        LinearLayout actions = new LinearLayout(this);
-        actions.setOrientation(LinearLayout.HORIZONTAL);
-        Button task = primaryButton("＋ 新建待办", v -> showTaskDialog());
-        Button note = secondaryButton("＋ 写笔记", v -> showNoteDialog());
-        actions.addView(task, weighted());
-        actions.addView(spaceHorizontal(10));
-        actions.addView(note, weighted());
-        root.addView(actions, matchWrap());
 
         root.addView(sectionTitle("语音控制"));
         root.addView(buildVoiceCard(), matchWrap());
@@ -202,6 +268,9 @@ public class MainActivity extends Activity {
         CheckBox autoStart = new CheckBox(this);
         autoStart.setText("手机重启后尝试恢复桌宠");
         autoStart.setTextColor(TEXT);
+        autoStart.setButtonTintList(new ColorStateList(
+                new int[][]{new int[]{android.R.attr.state_checked}, new int[]{}},
+                new int[]{CYAN, TEXT_MUTED}));
         SharedPreferences prefs = getSharedPreferences("pet_settings", MODE_PRIVATE);
         autoStart.setChecked(prefs.getBoolean("auto_start", false));
         autoStart.setOnCheckedChangeListener((buttonView, checked) ->
@@ -210,12 +279,160 @@ public class MainActivity extends Activity {
         TextView hint = text(isXiaomi()
                         ? "红米提示：请同时允许“自启动”，并将省电策略设为“不限制”。不同 HyperOS 版本的名称可能略有差异。"
                         : "如果桌宠容易消失，请在系统设置里允许自启动，并关闭针对本应用的电池限制。",
-                12, Color.rgb(120, 103, 93), false);
+                12, TEXT_MUTED, false);
         hint.setPadding(0, dp(8), 0, 0);
         settings.addView(hint);
         root.addView(settings, matchWrap());
 
-        return scroll;
+        screen.addView(scroll, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        if (showStartupAnimation) screen.addView(buildStartupOverlay(), new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        return screen;
+    }
+
+    private FrameLayout buildStartupOverlay() {
+        startupOverlay = new FrameLayout(this);
+        GradientDrawable backdrop = new GradientDrawable(
+                GradientDrawable.Orientation.TL_BR,
+                new int[]{Color.rgb(1, 5, 16), Color.rgb(5, 24, 48), Color.rgb(2, 8, 24)});
+        startupOverlay.setBackground(backdrop);
+        startupOverlay.setClickable(true);
+        startupOverlay.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
+        startupOverlay.setContentDescription("费雾启动动画");
+
+        Button skip = outlineButton("跳过", v -> dismissStartup());
+        skip.setMinWidth(dp(76));
+        FrameLayout.LayoutParams skipParams = new FrameLayout.LayoutParams(dp(84), dp(48));
+        skipParams.gravity = Gravity.END | Gravity.TOP;
+        skipParams.setMargins(0, dp(16), dp(16), 0);
+        startupOverlay.addView(skip, skipParams);
+
+        LinearLayout center = vertical();
+        center.setGravity(Gravity.CENTER_HORIZONTAL);
+        center.setPadding(dp(26), 0, dp(26), 0);
+
+        startupMascot = new ImageView(this);
+        startupMascot.setImageResource(R.drawable.skin_mist_blob);
+        startupMascot.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        startupMascot.setAlpha(0.35f);
+        startupMascot.setScaleX(0.82f);
+        startupMascot.setScaleY(0.82f);
+        startupMascot.setContentDescription("正在苏醒的费雾雾狐");
+        center.addView(startupMascot, new LinearLayout.LayoutParams(dp(210), dp(210)));
+        center.addView(space(16));
+
+        startupStage = text("灵核唤醒", 27, TEXT, true);
+        startupStage.setGravity(Gravity.CENTER);
+        center.addView(startupStage, matchWrap());
+        center.addView(space(8));
+        startupDetail = text("CORE AWAKENING · 00", 11, CYAN, true);
+        startupDetail.setGravity(Gravity.CENTER);
+        startupDetail.setLetterSpacing(0.13f);
+        center.addView(startupDetail, matchWrap());
+        center.addView(space(24));
+
+        View progress = new View(this);
+        GradientDrawable progressBg = new GradientDrawable(
+                GradientDrawable.Orientation.LEFT_RIGHT,
+                new int[]{Color.TRANSPARENT, CYAN, Color.WHITE, CYAN, Color.TRANSPARENT});
+        progress.setBackground(progressBg);
+        center.addView(progress, new LinearLayout.LayoutParams(dp(236), dp(2)));
+        center.addView(space(14));
+        TextView hint = text("正在初始化本机感知、提醒与模型链路", 12, TEXT_MUTED, false);
+        hint.setGravity(Gravity.CENTER);
+        center.addView(hint, matchWrap());
+
+        FrameLayout.LayoutParams centerParams = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        centerParams.gravity = Gravity.CENTER;
+        startupOverlay.addView(center, centerParams);
+
+        TextView footer = text("FEIWU · DEEPSEA CORE SYSTEM", 10, Color.argb(170, 151, 205, 221), true);
+        footer.setGravity(Gravity.CENTER);
+        footer.setLetterSpacing(0.12f);
+        FrameLayout.LayoutParams footerParams = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        footerParams.gravity = Gravity.BOTTOM;
+        footerParams.setMargins(dp(16), 0, dp(16), dp(28));
+        startupOverlay.addView(footer, footerParams);
+        return startupOverlay;
+    }
+
+    private void startStartupSequence() {
+        if (startupOverlay == null || startupStage == null) return;
+        String[] stages = {
+                "灵核唤醒", "正在建立感知", "身份确认", "请求本机权限",
+                "读取服务状态", "建立灵核链路", "费雾已苏醒", "欢迎回来"
+        };
+        String[] details = {
+                "CORE AWAKENING · 01", "SENSORY LINK · 02", "IDENTITY VERIFIED · 03",
+                "LOCAL PERMISSION · 04", "SERVICE SCAN · 05", "CORE LINK · 06",
+                "FEIWU ONLINE · 07", "SYSTEM READY · 08"
+        };
+        long[] at = {0L, 430L, 850L, 1210L, 1610L, 2020L, 2550L, 3040L};
+        for (int i = 0; i < stages.length; i++) {
+            final int index = i;
+            startupHandler.postDelayed(() -> showStartupStage(stages[index], details[index], index), at[i]);
+        }
+        startupHandler.postDelayed(this::dismissStartup, 3500L);
+    }
+
+    private void showStartupStage(String stage, String detail, int index) {
+        if (startupStage == null || startupDetail == null || startupOverlay == null) return;
+        startupStage.animate().cancel();
+        startupDetail.animate().cancel();
+        startupStage.animate().alpha(0f).setDuration(70L).withEndAction(() -> {
+            startupStage.setText(stage);
+            startupDetail.setText(detail);
+            startupStage.animate().alpha(1f).translationY(0f).setDuration(180L).start();
+            startupDetail.animate().alpha(1f).setDuration(180L).start();
+        }).start();
+        startupStage.setTranslationY(dp(5));
+        startupDetail.setAlpha(0f);
+        if (startupMascot != null) {
+            float scale = index < 2 ? 0.84f : index < 6 ? 0.92f : 1f;
+            startupMascot.animate()
+                    .alpha(index < 2 ? 0.38f : index < 6 ? 0.62f : 1f)
+                    .scaleX(scale).scaleY(scale)
+                    .setDuration(index == 2 ? 180L : 320L)
+                    .start();
+        }
+        if (index == 2) {
+            startupOverlay.animate().alpha(0.66f).setDuration(85L)
+                    .withEndAction(() -> startupOverlay.animate().alpha(1f).setDuration(160L).start())
+                    .start();
+        }
+        startupOverlay.announceForAccessibility(stage);
+    }
+
+    private void dismissStartup() {
+        startupHandler.removeCallbacksAndMessages(null);
+        if (startupOverlay == null) return;
+        FrameLayout overlay = startupOverlay;
+        startupOverlay = null;
+        overlay.animate().alpha(0f).setDuration(260L).withEndAction(() -> {
+            ViewGroup parent = (ViewGroup) overlay.getParent();
+            if (parent != null) parent.removeView(overlay);
+        }).start();
+    }
+
+    private String greeting() {
+        int hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY);
+        if (hour < 6) return "夜深了";
+        if (hour < 11) return "早上好";
+        if (hour < 14) return "中午好";
+        if (hour < 18) return "下午好";
+        return "晚上好";
+    }
+
+    private GradientDrawable heroSurface() {
+        GradientDrawable drawable = new GradientDrawable(
+                GradientDrawable.Orientation.TL_BR,
+                new int[]{Color.argb(242, 7, 29, 57), Color.argb(226, 9, 52, 83), Color.argb(236, 5, 19, 45)});
+        drawable.setCornerRadius(dp(26));
+        drawable.setStroke(dp(1), Color.argb(170, 65, 216, 238));
+        return drawable;
     }
 
     private View buildSkinCard() {
@@ -227,7 +444,7 @@ public class MainActivity extends Activity {
         layout.addView(skinPreview, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(180)));
 
-        skinDescription = text("", 13, Color.rgb(110, 94, 86), false);
+        skinDescription = text("", 13, TEXT_MUTED, false);
         skinDescription.setGravity(Gravity.CENTER);
         layout.addView(skinDescription);
         layout.addView(space(8));
@@ -243,8 +460,8 @@ public class MainActivity extends Activity {
         } else {
             displayNames = builtInNames;
         }
-        skinSpinner.setAdapter(new ArrayAdapter<>(this,
-                android.R.layout.simple_spinner_dropdown_item, displayNames));
+        skinSpinner.setAdapter(darkSpinnerAdapter(displayNames));
+        skinSpinner.setBackground(fieldSurface());
         int selected = prefs.getInt("selected_skin", 1);
         skinSpinner.setSelection(selected == -1 && hasCustom
                 ? builtInNames.length : SkinCatalog.safeIndex(selected));
@@ -273,8 +490,9 @@ public class MainActivity extends Activity {
         sizeBar.setMin(70);
         sizeBar.setMax(150);
         sizeBar.setProgress(prefs.getInt("pet_size_percent", 100));
-        TextView sizeValue = text(sizeBar.getProgress() + "%", 12,
-                Color.rgb(122, 101, 90), false);
+        sizeBar.setProgressTintList(ColorStateList.valueOf(CYAN));
+        sizeBar.setThumbTintList(ColorStateList.valueOf(CYAN));
+        TextView sizeValue = text(sizeBar.getProgress() + "%", 12, TEXT_MUTED, false);
         sizeValue.setGravity(Gravity.CENTER_HORIZONTAL);
         sizeBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override
@@ -304,7 +522,7 @@ public class MainActivity extends Activity {
                         "示例：你好费雾，记一下周末买猫粮\n" +
                         "示例：你好费雾，今天有什么待办\n" +
                         "也可以问时间、问它会做什么，或换一种自然说法。",
-                13, Color.rgb(105, 90, 82), false));
+                13, TEXT_MUTED, false));
         layout.addView(space(12));
         voiceToggleButton = primaryButton("开启持续语音唤醒", v -> toggleVoiceControl());
         layout.addView(voiceToggleButton, matchWrap());
@@ -314,8 +532,8 @@ public class MainActivity extends Activity {
         String[] styleLabels = {"自然（自动选择高质量中文声线）", "温柔舒缓", "活泼明亮",
                 "纯离线", "跟随系统默认"};
         String[] styleValues = {"natural", "gentle", "bright", "offline", "system"};
-        voiceStyle.setAdapter(new ArrayAdapter<>(this,
-                android.R.layout.simple_spinner_dropdown_item, styleLabels));
+        voiceStyle.setAdapter(darkSpinnerAdapter(styleLabels));
+        voiceStyle.setBackground(fieldSurface());
         String currentStyle = prefs.getString("tts_profile", "natural");
         int currentIndex = 0;
         for (int i = 0; i < styleValues.length; i++) {
@@ -349,6 +567,9 @@ public class MainActivity extends Activity {
         CheckBox modelEnabled = new CheckBox(this);
         modelEnabled.setText("启用智能对话（普通问题自动交给模型回答）");
         modelEnabled.setTextColor(TEXT);
+        modelEnabled.setButtonTintList(new ColorStateList(
+                new int[][]{new int[]{android.R.attr.state_checked}, new int[]{}},
+                new int[]{CYAN, TEXT_MUTED}));
         modelEnabled.setChecked(prefs.getBoolean("model_enabled", true));
         layout.addView(modelEnabled);
         EditText endpoint = input("电脑服务地址，例如 http://192.168.1.20:8765");
@@ -377,7 +598,7 @@ public class MainActivity extends Activity {
         layout.addView(saveModel, matchWrap());
         layout.addView(space(7));
         layout.addView(text("电脑地址仅用于开发测试；正式发布时应由应用内置云端 HTTPS 服务地址，用户无需配置。",
-                12, Color.rgb(135, 116, 105), false));
+                12, TEXT_MUTED, false));
         return layout;
     }
 
@@ -504,7 +725,8 @@ public class MainActivity extends Activity {
 
         Spinner repeat = new Spinner(this);
         String[] repeatLabels = {"不重复", "每天重复", "每周重复"};
-        repeat.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, repeatLabels));
+        repeat.setAdapter(darkSpinnerAdapter(repeatLabels));
+        repeat.setBackground(fieldSurface());
         form.addView(title);
         form.addView(space(6));
         form.addView(detail);
@@ -587,14 +809,14 @@ public class MainActivity extends Activity {
             empty.addView(text("还没有记录", 16, TEXT, true));
             empty.addView(space(4));
             empty.addView(text("新建一个待办，试试让费雾提醒你。", 13,
-                    Color.rgb(130, 112, 101), false));
+                    TEXT_MUTED, false));
             listContainer.addView(empty, matchWrap());
             return;
         }
         for (Item item : items) {
             LinearLayout card = card();
             TextView tag = text("TASK".equals(item.type) ? "待办" : "笔记", 12,
-                    "TASK".equals(item.type) ? ORANGE : Color.rgb(79, 139, 125), true);
+                    "TASK".equals(item.type) ? CYAN : Color.rgb(157, 139, 255), true);
             card.addView(tag);
             TextView title = text((item.done ? "✓ " : "") + item.title, 17,
                     item.done ? Color.GRAY : TEXT, true);
@@ -603,10 +825,10 @@ public class MainActivity extends Activity {
                 String repeatText = "DAILY".equals(item.repeatType) ? " · 每天" :
                         "WEEKLY".equals(item.repeatType) ? " · 每周" : "";
                 card.addView(text(formatTime(item.dueAt) + repeatText, 12,
-                        Color.rgb(122, 101, 90), false));
+                        TEXT_MUTED, false));
             }
             if (!item.content.isEmpty()) {
-                TextView content = text(item.content, 14, Color.rgb(93, 78, 70), false);
+                TextView content = text(item.content, 14, TEXT_MUTED, false);
                 content.setPadding(0, dp(7), 0, 0);
                 card.addView(content);
             }
@@ -726,14 +948,22 @@ public class MainActivity extends Activity {
 
     private LinearLayout card() {
         LinearLayout layout = vertical();
-        layout.setPadding(dp(16), dp(15), dp(16), dp(15));
-        layout.setBackground(rounded(Color.WHITE, 18));
+        layout.setPadding(dp(17), dp(16), dp(17), dp(16));
+        GradientDrawable surface = new GradientDrawable(
+                GradientDrawable.Orientation.TL_BR,
+                new int[]{Color.argb(235, 10, 34, 62), Color.argb(224, 8, 25, 50)});
+        surface.setCornerRadius(dp(20));
+        surface.setStroke(dp(1), LINE);
+        layout.setBackground(surface);
+        layout.setElevation(dp(2));
         return layout;
     }
 
     private TextView sectionTitle(String value) {
-        TextView view = text(value, 18, TEXT, true);
-        view.setPadding(dp(2), dp(22), 0, dp(10));
+        TextView view = text(value, 17, TEXT, true);
+        view.setCompoundDrawablePadding(dp(8));
+        view.setPadding(dp(2), dp(24), 0, dp(11));
+        view.setLetterSpacing(0.03f);
         return view;
     }
 
@@ -751,20 +981,30 @@ public class MainActivity extends Activity {
         EditText edit = new EditText(this);
         edit.setHint(hint);
         edit.setTextColor(TEXT);
-        edit.setHintTextColor(Color.rgb(160, 145, 137));
+        edit.setHintTextColor(Color.rgb(126, 158, 184));
         edit.setSingleLine(false);
         edit.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        edit.setTextSize(14);
+        edit.setPadding(dp(14), dp(11), dp(14), dp(11));
+        edit.setMinHeight(dp(52));
+        edit.setBackground(fieldSurface());
         return edit;
     }
 
     private Button primaryButton(String value, View.OnClickListener listener) {
         Button button = new Button(this);
         button.setText(value);
-        button.setTextColor(Color.WHITE);
+        button.setTextColor(Color.rgb(2, 18, 31));
         button.setTextSize(14);
+        button.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         button.setAllCaps(false);
-        button.setBackground(rounded(ORANGE, 14));
+        GradientDrawable content = new GradientDrawable(
+                GradientDrawable.Orientation.LEFT_RIGHT, new int[]{CYAN, Color.rgb(99, 207, 255)});
+        content.setCornerRadius(dp(14));
+        button.setBackground(new RippleDrawable(ColorStateList.valueOf(Color.argb(70, 255, 255, 255)), content, null));
         button.setMinHeight(dp(48));
+        button.setPadding(dp(12), 0, dp(12), 0);
+        button.setStateListAnimator(null);
         if (listener != null) button.setOnClickListener(listener);
         return button;
     }
@@ -774,9 +1014,14 @@ public class MainActivity extends Activity {
         button.setText(value);
         button.setTextColor(TEXT);
         button.setTextSize(14);
+        button.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         button.setAllCaps(false);
-        button.setBackground(rounded(Color.rgb(255, 232, 203), 14));
+        GradientDrawable content = rounded(Color.argb(235, 13, 47, 80), 14);
+        content.setStroke(dp(1), Color.argb(170, 63, 191, 224));
+        button.setBackground(new RippleDrawable(ColorStateList.valueOf(Color.argb(70, 50, 229, 242)), content, null));
         button.setMinHeight(dp(48));
+        button.setPadding(dp(10), 0, dp(10), 0);
+        button.setStateListAnimator(null);
         if (listener != null) button.setOnClickListener(listener);
         return button;
     }
@@ -786,10 +1031,13 @@ public class MainActivity extends Activity {
         button.setText(value);
         button.setTextColor(TEXT);
         button.setTextSize(14);
+        button.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         button.setAllCaps(false);
-        GradientDrawable bg = rounded(Color.rgb(255, 251, 245), 12);
-        bg.setStroke(dp(1), Color.rgb(230, 210, 191));
-        button.setBackground(bg);
+        GradientDrawable bg = rounded(Color.argb(198, 7, 28, 52), 12);
+        bg.setStroke(dp(1), LINE);
+        button.setBackground(new RippleDrawable(ColorStateList.valueOf(Color.argb(65, 50, 229, 242)), bg, null));
+        button.setMinHeight(dp(48));
+        button.setStateListAnimator(null);
         button.setOnClickListener(listener);
         return button;
     }
@@ -807,6 +1055,38 @@ public class MainActivity extends Activity {
         drawable.setColor(color);
         drawable.setCornerRadius(dp(radiusDp));
         return drawable;
+    }
+
+    private GradientDrawable fieldSurface() {
+        GradientDrawable drawable = rounded(Color.argb(230, 5, 24, 47), 13);
+        drawable.setStroke(dp(1), Color.argb(135, 73, 166, 201));
+        return drawable;
+    }
+
+    private ArrayAdapter<String> darkSpinnerAdapter(String[] values) {
+        return new ArrayAdapter<String>(this, android.R.layout.simple_spinner_item, values) {
+            @Override
+            public View getView(int position, View convertView, ViewGroup parent) {
+                TextView view = (TextView) super.getView(position, convertView, parent);
+                styleSpinnerText(view, false);
+                return view;
+            }
+
+            @Override
+            public View getDropDownView(int position, View convertView, ViewGroup parent) {
+                TextView view = (TextView) super.getDropDownView(position, convertView, parent);
+                styleSpinnerText(view, true);
+                return view;
+            }
+        };
+    }
+
+    private void styleSpinnerText(TextView view, boolean dropdown) {
+        view.setTextColor(TEXT);
+        view.setTextSize(14);
+        view.setGravity(Gravity.CENTER_VERTICAL);
+        view.setPadding(dp(14), dp(12), dp(14), dp(12));
+        if (dropdown) view.setBackgroundColor(SURFACE_HIGH);
     }
 
     private View space(int height) {
