@@ -125,8 +125,8 @@ public class PetOverlayService extends Service {
         int bottom = params.y + oldHeight;
         int screenW = getResources().getDisplayMetrics().widthPixels;
         int screenH = getResources().getDisplayMetrics().heightPixels;
-        params.width = expanded ? Math.min(screenW, scaledDp(330)) : scaledDp(190);
-        params.height = scaledDp(expanded ? 220 : 190);
+        params.width = expanded ? Math.min(screenW, scaledDp(360)) : scaledDp(190);
+        params.height = expanded ? Math.min(screenH, scaledDp(250)) : scaledDp(190);
         params.x = right - params.width;
         params.y = bottom - params.height;
         params.x = Math.max(-params.width / 3,

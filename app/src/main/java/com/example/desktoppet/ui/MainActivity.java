@@ -123,6 +123,7 @@ public class MainActivity extends Activity {
         super.onResume();
         updatePermissionStatus();
         updateMusicPermissionStatus();
+        MusicNotificationListener.syncCurrentState(this);
         updateVoiceButton();
         refreshList();
         SharedPreferences prefs = getSharedPreferences("pet_settings", MODE_PRIVATE);

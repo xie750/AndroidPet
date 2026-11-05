@@ -90,6 +90,11 @@ public final class PetView extends View {
     private long musicExitAt = Long.MAX_VALUE;
     private String musicTitle = "";
     private String musicArtist = "";
+    private float musicDiscAngle;
+    private float musicRunPhase = .58f;
+    private long musicLastFrameAt;
+    private final RectF musicOval = new RectF();
+    private final Path musicPath = new Path();
 
     PetView(Context context, DragListener dragListener, MusicSceneListener musicSceneListener) {
         super(context);
@@ -129,6 +134,9 @@ public final class PetView extends View {
             if (!musicSceneVisible) {
                 musicSceneVisible = true;
                 musicSceneStarted = now;
+                musicDiscAngle = 0f;
+                musicRunPhase = .58f;
+                musicLastFrameAt = now;
                 musicSceneListener.onVisibilityChanged(true);
             }
             musicPlaying = true;
@@ -137,7 +145,7 @@ public final class PetView extends View {
             if (trackChanged || now - musicSceneStarted < 250L) {
                 String track = musicTitle;
                 if (!musicArtist.isEmpty()) track += " · " + musicArtist;
-                message = track.isEmpty() ? "黑胶伴听模式启动" : "♪ " + track;
+                message = track.isEmpty() ? "四季开始流转" : track;
                 messageUntil = now + 3800L;
             }
             if (action == Action.SLEEP) action = Action.IDLE;
@@ -146,7 +154,7 @@ public final class PetView extends View {
             musicPlaying = false;
             musicPaused = true;
             musicExitAt = now + 18_000L;
-            message = "唱针抬起，等你回来";
+            message = "四季停在这里，等你回来";
             messageUntil = now + 3200L;
         } else if (musicSceneVisible) {
             musicPlaying = false;
@@ -221,12 +229,14 @@ public final class PetView extends View {
         float offsetX = 0f;
         float offsetY = 0f;
 
+        float musicStageAlpha = 0f;
         if (musicSceneVisible) {
-            float stageAlpha = Math.min(1f, (now - musicSceneStarted) / 650f);
+            advanceMusicScene(now);
+            musicStageAlpha = Math.min(1f, (now - musicSceneStarted) / 650f);
             if (musicExitAt != Long.MAX_VALUE && musicExitAt - now < 1200L) {
-                stageAlpha *= Math.max(0f, (musicExitAt - now) / 1200f);
+                musicStageAlpha *= Math.max(0f, (musicExitAt - now) / 1200f);
             }
-            drawMusicStage(canvas, width, height, density, now, stageAlpha);
+            drawMusicStage(canvas, width, height, density, now, musicStageAlpha);
         }
 
         float progress = actionUntil > actionStarted
@@ -291,7 +301,8 @@ public final class PetView extends View {
             rotation += syllable * .65f;
         }
 
-        if (musicPlaying && action != Action.DRAG && action != Action.POKE && action != Action.PET) {
+        if (musicPlaying && !musicSceneVisible && action != Action.DRAG
+                && action != Action.POKE && action != Action.PET) {
             double beat = (now % 720L) / 720.0 * Math.PI * 2.0;
             rotation += (float) Math.sin(beat) * 4.6f;
             bob += (float) Math.abs(Math.sin(beat)) * -2.6f * density;
@@ -299,23 +310,32 @@ public final class PetView extends View {
         }
 
         if (now < messageUntil || messageUntil == Long.MAX_VALUE) {
-            drawBubble(canvas, message, width, density);
+            if (musicSceneVisible) drawMusicCaption(canvas, message, width, height, density, musicStageAlpha);
+            else drawBubble(canvas, message, width, density);
+        } else if (musicSceneVisible && !musicTitle.isEmpty()) {
+            String track = musicArtist.isEmpty() ? musicTitle : musicTitle + " · " + musicArtist;
+            drawMusicCaption(canvas, track, width, height, density, musicStageAlpha);
         }
 
-        float top = musicSceneVisible ? height * .24f : 58f * density;
-        float bottom = height - (musicSceneVisible ? 9f : 2f) * density;
-        float left = musicSceneVisible ? width * .48f : 7f * density;
-        float right = width - 7f * density;
-        float pivotX = (left + right) / 2f;
-        canvas.save();
-        float pivotY = (top + bottom) / 2f;
-        pose.setScale(1f + (scaleX - 1f) * .5f, 1f + (scaleY - 1f) * .5f, pivotX, pivotY);
-        pose.postRotate(rotation * .55f, pivotX, pivotY);
-        pose.postTranslate(offsetX, bob + offsetY);
-        canvas.concat(pose);
-        pose.invert(inversePose);
-        drawSkin(canvas, left, top, right, bottom);
-        canvas.restore();
+        if (musicSceneVisible) {
+            drawMusicPet(canvas, width, height, density, now, musicStageAlpha);
+        } else {
+            float top = 58f * density;
+            float bottom = height - 2f * density;
+            float left = 7f * density;
+            float right = width - 7f * density;
+            float pivotX = (left + right) / 2f;
+            canvas.save();
+            float pivotY = (top + bottom) / 2f;
+            pose.setScale(1f + (scaleX - 1f) * .5f,
+                    1f + (scaleY - 1f) * .5f, pivotX, pivotY);
+            pose.postRotate(rotation * .55f, pivotX, pivotY);
+            pose.postTranslate(offsetX, bob + offsetY);
+            canvas.concat(pose);
+            pose.invert(inversePose);
+            drawSkin(canvas, left, top, right, bottom);
+            canvas.restore();
+        }
 
         if (touching || speaking || musicSceneVisible || (action != Action.IDLE && action != Action.SLEEP)
                 || tick - blinkStart < 200L) postInvalidateOnAnimation();
@@ -389,121 +409,391 @@ public final class PetView extends View {
 
     private void drawMusicStage(Canvas canvas, float width, float height, float density,
                                 long now, float alpha) {
-        density = Math.min(density, Math.min(width / 330f, height / 220f));
-        int stageAlpha = Math.round(238f * alpha);
-        float panelLeft = 4f * density;
-        float panelTop = 53f * density;
-        float panelRight = width - 4f * density;
-        float panelBottom = height - 3f * density;
-        RectF panel = new RectF(panelLeft, panelTop, panelRight, panelBottom);
-        paint.setShader(new LinearGradient(panelLeft, panelTop, panelRight, panelBottom,
-                new int[]{Color.argb(stageAlpha, 8, 10, 27),
-                        Color.argb(stageAlpha, 35, 16, 48),
-                        Color.argb(stageAlpha, 8, 34, 46)},
-                null, Shader.TileMode.CLAMP));
-        paint.setStyle(Paint.Style.FILL);
-        canvas.drawRoundRect(panel, 22f * density, 22f * density, paint);
-        paint.setShader(null);
+        density = musicDensity(width, height, density);
+        float cx = width * .5f;
+        float cy = height * .50f;
+        float radius = Math.min(width * .465f, 168f * density);
+        float flatten = .42f;
+        float ry = radius * flatten;
+        float terrainRadius = radius * .82f;
+        float edgeDepth = 10f * density;
+        float entrance = easeOut(Math.min(1f, (now - musicSceneStarted) / 720f));
 
-        paint.setStyle(Paint.Style.STROKE);
-        paint.setStrokeWidth(1.3f * density);
-        paint.setColor(Color.argb(Math.round(150f * alpha), 67, 231, 246));
-        canvas.drawRoundRect(panel, 22f * density, 22f * density, paint);
-        paint.setStyle(Paint.Style.FILL);
-
-        float barsBottom = panelBottom - 8f * density;
-        for (int i = 0; i < 11; i++) {
-            double wave = now / 185.0 + i * .82;
-            float energy = musicPlaying ? (float) Math.abs(Math.sin(wave)) : .12f;
-            float barHeight = (5f + energy * (18f + i % 3 * 5f)) * density;
-            float barLeft = panelLeft + (12f + i * 10f) * density;
-            paint.setColor(Color.argb(Math.round((75f + energy * 105f) * alpha),
-                    i % 2 == 0 ? 54 : 244, i % 2 == 0 ? 220 : 76,
-                    i % 2 == 0 ? 244 : 151));
-            canvas.drawRoundRect(new RectF(barLeft, barsBottom - barHeight,
-                    barLeft + 4f * density, barsBottom), 2f * density, 2f * density, paint);
-        }
-
-        float cx = Math.min(width * .27f, 92f * density);
-        float cy = height * .63f;
-        float radius = Math.min(43f * density, width * .145f);
-        RectF deck = new RectF(cx - radius - 15f * density, cy - radius - 13f * density,
-                cx + radius + 24f * density, cy + radius + 17f * density);
-        paint.setShader(new LinearGradient(deck.left, deck.top, deck.right, deck.bottom,
-                Color.argb(Math.round(245f * alpha), 112, 55, 38),
-                Color.argb(Math.round(245f * alpha), 36, 18, 28), Shader.TileMode.CLAMP));
-        canvas.drawRoundRect(deck, 12f * density, 12f * density, paint);
-        paint.setShader(null);
-        paint.setStyle(Paint.Style.STROKE);
-        paint.setStrokeWidth(2f * density);
-        paint.setColor(Color.argb(Math.round(180f * alpha), 255, 171, 79));
-        canvas.drawRoundRect(deck, 12f * density, 12f * density, paint);
-        paint.setStyle(Paint.Style.FILL);
-
-        paint.setColor(Color.argb(Math.round(110f * alpha), 45, 226, 247));
-        canvas.drawCircle(cx, cy + 2f * density, radius + 6f * density, paint);
         canvas.save();
-        if (musicPlaying) canvas.rotate((now - musicSceneStarted) * .095f, cx, cy);
-        paint.setColor(Color.argb(Math.round(255f * alpha), 8, 8, 13));
-        canvas.drawCircle(cx, cy, radius, paint);
-        paint.setStyle(Paint.Style.STROKE);
-        paint.setStrokeWidth(.75f * density);
-        for (int i = 1; i <= 6; i++) {
-            paint.setColor(Color.argb(Math.round((45f + i * 8f) * alpha), 185, 199, 214));
-            canvas.drawCircle(cx, cy, radius * i / 7f, paint);
-        }
-        paint.setStrokeWidth(5f * density);
-        paint.setColor(Color.argb(Math.round(90f * alpha), 90, 224, 244));
-        canvas.drawArc(new RectF(cx - radius * .76f, cy - radius * .76f,
-                cx + radius * .76f, cy + radius * .76f), 205f, 34f, false, paint);
+        canvas.scale(.86f + entrance * .14f, .86f + entrance * .14f, cx, cy);
+
         paint.setStyle(Paint.Style.FILL);
-        paint.setColor(Color.argb(Math.round(255f * alpha), 239, 88, 125));
-        canvas.drawCircle(cx, cy, radius * .25f, paint);
-        paint.setColor(Color.argb(Math.round(255f * alpha), 255, 205, 92));
-        canvas.drawCircle(cx, cy, radius * .075f, paint);
-        paint.setStrokeWidth(2f * density);
-        paint.setColor(Color.argb(Math.round(225f * alpha), 255, 225, 175));
-        canvas.drawRect(cx - radius * .05f, cy - radius * .23f,
-                cx + radius * .05f, cy + radius * .23f, paint);
+        paint.setShader(null);
+        paint.setColor(Color.argb(Math.round(92f * alpha), 3, 5, 7));
+        musicOval.set(cx - radius * .92f, cy + ry * .66f,
+                cx + radius * .92f, cy + ry + edgeDepth * 1.8f);
+        canvas.drawOval(musicOval, paint);
+
+        musicOval.set(cx - radius, cy - ry + edgeDepth,
+                cx + radius, cy + ry + edgeDepth);
+        paint.setShader(new LinearGradient(cx, cy - ry, cx, cy + ry + edgeDepth,
+                Color.argb(Math.round(255f * alpha), 43, 48, 53),
+                Color.argb(Math.round(255f * alpha), 3, 5, 8), Shader.TileMode.CLAMP));
+        canvas.drawOval(musicOval, paint);
+        paint.setShader(null);
+
+        canvas.save();
+        canvas.translate(cx, cy);
+        canvas.scale(1f, flatten);
+        canvas.rotate(musicDiscAngle);
+        musicPath.reset();
+        musicPath.addCircle(0f, 0f, radius, Path.Direction.CW);
+        canvas.clipPath(musicPath);
+
+        paint.setShader(new LinearGradient(-radius, -radius, radius, radius,
+                Color.argb(Math.round(255f * alpha), 35, 40, 45),
+                Color.argb(Math.round(255f * alpha), 2, 4, 7), Shader.TileMode.CLAMP));
+        canvas.drawCircle(0f, 0f, radius, paint);
+
+        paint.setShader(null);
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeWidth(.65f * density);
+        for (int i = 0; i < 6; i++) {
+            float groove = radius * (.86f + i * .022f);
+            paint.setColor(Color.argb(Math.round((65f + i * 7f) * alpha), 126, 139, 146));
+            canvas.drawCircle(0f, 0f, groove, paint);
+        }
+        paint.setStrokeWidth(2.1f * density);
+        paint.setColor(Color.argb(Math.round(130f * alpha), 167, 188, 196));
+        canvas.drawArc(-radius * .96f, -radius * .96f, radius * .96f, radius * .96f,
+                198f, 58f, false, paint);
+        paint.setStyle(Paint.Style.FILL);
+
+        canvas.save();
+        musicPath.reset();
+        musicPath.addCircle(0f, 0f, terrainRadius, Path.Direction.CW);
+        canvas.clipPath(musicPath);
+
+        paint.setShader(new LinearGradient(-terrainRadius, -terrainRadius,
+                terrainRadius, terrainRadius,
+                Color.argb(Math.round(255f * alpha), 205, 238, 255),
+                Color.argb(Math.round(255f * alpha), 137, 190, 219), Shader.TileMode.CLAMP));
+        canvas.drawCircle(0f, 0f, terrainRadius, paint);
+
+        paint.setShader(new LinearGradient(-terrainRadius, -terrainRadius,
+                terrainRadius * .2f, terrainRadius * .2f,
+                Color.argb(Math.round(255f * alpha), 130, 224, 82),
+                Color.argb(Math.round(255f * alpha), 45, 142, 70), Shader.TileMode.CLAMP));
+        canvas.drawCircle(-terrainRadius * .38f, -terrainRadius * .53f,
+                terrainRadius * .83f, paint);
+
+        paint.setShader(new LinearGradient(-terrainRadius * .1f, -terrainRadius,
+                terrainRadius * .8f, terrainRadius * .15f,
+                Color.argb(Math.round(255f * alpha), 75, 180, 85),
+                Color.argb(Math.round(255f * alpha), 17, 104, 57), Shader.TileMode.CLAMP));
+        canvas.drawCircle(terrainRadius * .12f, -terrainRadius * .83f,
+                terrainRadius * .76f, paint);
+
+        paint.setShader(new LinearGradient(terrainRadius * .1f, -terrainRadius,
+                terrainRadius, terrainRadius * .2f,
+                Color.argb(Math.round(255f * alpha), 246, 184, 70),
+                Color.argb(Math.round(255f * alpha), 183, 80, 31), Shader.TileMode.CLAMP));
+        canvas.drawCircle(terrainRadius * .70f, -terrainRadius * .36f,
+                terrainRadius * .73f, paint);
+        paint.setShader(null);
+
+        drawSeasonTexture(canvas, terrainRadius, density, alpha);
         canvas.restore();
 
-        float armX = cx + radius + 13f * density;
-        float armY = cy - radius + 5f * density;
-        float needleX = musicPlaying ? cx + radius * .48f : cx + radius * .84f;
-        float needleY = musicPlaying ? cy - radius * .28f : cy - radius * .70f;
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeWidth(1.5f * density);
+        paint.setColor(Color.argb(Math.round(210f * alpha), 221, 231, 220));
+        canvas.drawCircle(0f, 0f, terrainRadius, paint);
+        paint.setStrokeWidth(1.1f * density);
+        paint.setColor(Color.argb(Math.round(165f * alpha), 188, 207, 214));
+        canvas.drawCircle(0f, 0f, radius - 1.2f * density, paint);
+        paint.setStyle(Paint.Style.FILL);
+        canvas.restore();
+
+        drawRimTicks(canvas, cx, cy, radius, ry, edgeDepth, density, alpha);
+        drawMusicHub(canvas, cx, cy, radius, ry, density, alpha);
+        drawSeasonWeather(canvas, cx, cy, radius, ry, density, alpha);
+        canvas.restore();
+    }
+
+    private void advanceMusicScene(long now) {
+        if (musicLastFrameAt == 0L) musicLastFrameAt = now;
+        float dt = Math.min(.05f, Math.max(0f, (now - musicLastFrameAt) / 1000f));
+        musicLastFrameAt = now;
+        if (!musicPlaying) return;
+        musicDiscAngle = (musicDiscAngle + dt * 15f) % 360f;
+        musicRunPhase = (float) ((musicRunPhase + dt * .68f) % (Math.PI * 2.0));
+    }
+
+    private float musicDensity(float width, float height, float density) {
+        return Math.min(density, Math.min(width / 360f, height / 250f));
+    }
+
+    private float easeOut(float value) {
+        float inverse = 1f - value;
+        return 1f - inverse * inverse * inverse;
+    }
+
+    private void drawSeasonTexture(Canvas canvas, float radius, float density, float alpha) {
         paint.setStyle(Paint.Style.STROKE);
         paint.setStrokeCap(Paint.Cap.ROUND);
-        paint.setStrokeWidth(4f * density);
-        paint.setColor(Color.argb(Math.round(235f * alpha), 220, 224, 229));
-        canvas.drawLine(armX, armY, needleX, needleY, paint);
+        for (int i = 0; i < 210; i++) {
+            double angle = i * 2.3999632297 + .37;
+            float radial = radius * .96f * (float) Math.sqrt((i + .5f) / 210f);
+            float x = (float) Math.cos(angle) * radial;
+            float y = (float) Math.sin(angle) * radial;
+            float blade = (3.6f + i % 5 * .72f) * density;
+            if (y > radius * .06f) {
+                paint.setColor(Color.argb(Math.round((105f + i % 4 * 18f) * alpha),
+                        226, 245, 250));
+                paint.setStrokeWidth((.65f + i % 3 * .14f) * density);
+                canvas.drawLine(x, y + blade * .35f, x + (i % 3 - 1) * .65f * density,
+                        y - blade * .45f, paint);
+            } else if (x > radius * .28f) {
+                paint.setColor(Color.argb(Math.round((120f + i % 5 * 15f) * alpha),
+                        113, 57, 21));
+                paint.setStrokeWidth((.7f + i % 2 * .18f) * density);
+                canvas.drawLine(x, y + blade * .42f, x + (i % 3 - 1) * .9f * density,
+                        y - blade * .58f, paint);
+            } else {
+                paint.setColor(Color.argb(Math.round((125f + i % 5 * 16f) * alpha),
+                        20, 101 + i % 3 * 13, 48));
+                paint.setStrokeWidth((.72f + i % 2 * .18f) * density);
+                canvas.drawLine(x, y + blade * .42f, x + (i % 3 - 1) * .8f * density,
+                        y - blade * .58f, paint);
+            }
+        }
+        paint.setStrokeCap(Paint.Cap.BUTT);
         paint.setStyle(Paint.Style.FILL);
-        paint.setColor(Color.argb(Math.round(255f * alpha), 250, 188, 78));
-        canvas.drawCircle(armX, armY, 6f * density, paint);
+    }
+
+    private void drawRimTicks(Canvas canvas, float cx, float cy, float rx, float ry,
+                              float edgeDepth, float density, float alpha) {
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeWidth(1.15f * density);
+        paint.setStrokeCap(Paint.Cap.ROUND);
+        paint.setColor(Color.argb(Math.round(205f * alpha), 225, 218, 197));
+        double rotation = Math.toRadians(musicDiscAngle);
+        for (int i = 0; i < 38; i++) {
+            double angle = i * Math.PI * 2.0 / 38.0 + rotation;
+            if (Math.sin(angle) < -.18) continue;
+            float x = cx + (float) Math.cos(angle) * rx;
+            float y = cy + (float) Math.sin(angle) * ry + edgeDepth * .35f;
+            canvas.drawLine(x, y, x, y + edgeDepth * .58f, paint);
+        }
+        paint.setStrokeCap(Paint.Cap.BUTT);
+        paint.setStyle(Paint.Style.FILL);
+    }
+
+    private void drawMusicHub(Canvas canvas, float cx, float cy, float radius, float ry,
+                              float density, float alpha) {
+        float pointerAngle = (float) Math.toRadians(-72f + musicDiscAngle * 1.65f);
+        float endX = cx + (float) Math.cos(pointerAngle) * radius * .77f;
+        float endY = cy + (float) Math.sin(pointerAngle) * ry * .96f;
+
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeCap(Paint.Cap.ROUND);
+        paint.setStrokeWidth(2.7f * density);
+        paint.setColor(Color.argb(Math.round(250f * alpha), 238, 184, 50));
+        canvas.drawLine(cx, cy - 1f * density, endX, endY, paint);
         paint.setStrokeCap(Paint.Cap.BUTT);
 
-        for (int i = 0; i < 5; i++) {
-            double notePhase = (now / 760.0) + i * 1.37;
-            float noteX = cx - radius + (i * 23f % 86f) * density;
-            float noteY = panelTop + (24f + (float) Math.sin(notePhase) * 11f) * density;
-            paint.setTextSize((16f + i % 2 * 5f) * density);
-            paint.setTextAlign(Paint.Align.CENTER);
-            int noteAlpha = Math.round((musicPlaying ? 185f : 65f) * alpha);
-            paint.setColor(Color.argb(noteAlpha, i % 2 == 0 ? 69 : 255,
-                    i % 2 == 0 ? 229 : 107, i % 2 == 0 ? 244 : 170));
-            canvas.drawText(i % 2 == 0 ? "♪" : "♫", noteX, noteY, paint);
+        paint.setStyle(Paint.Style.FILL);
+        musicPath.reset();
+        float dx = (float) Math.cos(pointerAngle);
+        float dy = (float) Math.sin(pointerAngle);
+        float px = -dy * 4f * density;
+        float py = dx * 4f * density;
+        musicPath.moveTo(endX + dx * 8f * density, endY + dy * 4f * density);
+        musicPath.lineTo(endX + px, endY + py);
+        musicPath.lineTo(endX - px, endY - py);
+        musicPath.close();
+        paint.setColor(Color.argb(Math.round(255f * alpha), 255, 205, 77));
+        canvas.drawPath(musicPath, paint);
+
+        musicOval.set(cx - radius * .095f, cy - ry * .13f + 2f * density,
+                cx + radius * .095f, cy + ry * .13f + 3f * density);
+        paint.setColor(Color.argb(Math.round(115f * alpha), 0, 0, 0));
+        canvas.drawOval(musicOval, paint);
+        musicOval.offset(0f, -2f * density);
+        paint.setShader(new LinearGradient(musicOval.left, musicOval.top,
+                musicOval.right, musicOval.bottom,
+                Color.argb(Math.round(255f * alpha), 49, 50, 51),
+                Color.argb(Math.round(255f * alpha), 6, 7, 8), Shader.TileMode.CLAMP));
+        canvas.drawOval(musicOval, paint);
+        paint.setShader(null);
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeWidth(.8f * density);
+        paint.setColor(Color.argb(Math.round(145f * alpha), 202, 205, 207));
+        canvas.drawOval(musicOval, paint);
+        paint.setStyle(Paint.Style.FILL);
+    }
+
+    private void drawSeasonWeather(Canvas canvas, float cx, float cy, float rx, float ry,
+                                   float density, float alpha) {
+        int season = ((int) (musicDiscAngle / 90f)) & 3;
+        float seasonProgress = (musicDiscAngle % 90f) / 90f;
+        paint.setStrokeCap(Paint.Cap.ROUND);
+        for (int i = 0; i < 30; i++) {
+            float seed = (float) (Math.sin(i * 17.23 + 4.71) * 43758.5453);
+            seed -= (float) Math.floor(seed);
+            float fall = (seasonProgress * (1.25f + i % 3 * .18f) + i * .173f) % 1f;
+            float x = cx + (seed - .5f) * rx * 1.78f;
+            float y = cy - ry * 1.75f + fall * ry * 3.0f;
+            if (season == 0) {
+                paint.setStyle(Paint.Style.STROKE);
+                paint.setStrokeWidth(.65f * density);
+                paint.setColor(Color.argb(Math.round(80f * alpha), 177, 198, 203));
+                canvas.drawLine(x, y, x - 1.7f * density, y + 5.5f * density, paint);
+            } else if (season == 1) {
+                paint.setStyle(Paint.Style.FILL);
+                paint.setColor(Color.argb(Math.round(75f * alpha), 239, 228, 174));
+                canvas.drawCircle(x, y, (.45f + seed * .65f) * density, paint);
+            } else if (season == 2) {
+                paint.setStyle(Paint.Style.STROKE);
+                paint.setStrokeWidth(1.7f * density);
+                paint.setColor(Color.argb(Math.round(115f * alpha), 169, 104, 51));
+                canvas.drawLine(x, y, x + (seed - .5f) * 5f * density,
+                        y + 2.8f * density, paint);
+            } else {
+                paint.setStyle(Paint.Style.FILL);
+                paint.setColor(Color.argb(Math.round((105f + seed * 95f) * alpha),
+                        255, 255, 255));
+                canvas.drawCircle(x, y, (.7f + seed * 1.05f) * density, paint);
+            }
+        }
+        paint.setStrokeCap(Paint.Cap.BUTT);
+        paint.setStyle(Paint.Style.FILL);
+    }
+
+    private void drawMusicPet(Canvas canvas, float width, float height, float density,
+                              long now, float alpha) {
+        Bitmap bitmap = targetBitmap();
+        if (bitmap == null || bitmap.isRecycled()) return;
+        density = musicDensity(width, height, density);
+        float cx = width * .5f;
+        float cy = height * .50f;
+        float radius = Math.min(width * .465f, 168f * density);
+        float ry = radius * .42f;
+        float pathX = radius * .47f;
+        float pathY = ry * .49f;
+        float sin = (float) Math.sin(musicRunPhase);
+        float cos = (float) Math.cos(musicRunPhase);
+        float depth = .79f + (sin + 1f) * .105f;
+        float footX = cx + cos * pathX;
+        float footY = cy + sin * pathY + 2f * density;
+        float run = musicPlaying ? (float) Math.sin(musicRunPhase * 10.5f) : 0f;
+        float jump = musicPlaying
+                ? Math.max(0f, (float) Math.sin(musicRunPhase * 5.25f)) : 0f;
+        float bounce = musicPlaying ? jump * 10.5f * density
+                : (float) Math.sin(now / 520.0) * .7f * density;
+        float entrance = easeOut(Math.min(1f, (now - musicSceneStarted) / 720f));
+        float petWidth = 52f * density * depth * (1.38f - entrance * .38f);
+        float petHeight = petWidth * 1.04f;
+        float groundY = footY;
+        footY = groundY - (1f - entrance) * 18f * density - bounce;
+
+        if (musicPlaying) {
+            paint.setColor(Color.argb(Math.round(54f * alpha), 236, 237, 225));
+            for (int i = 0; i < 3; i++) {
+                float puffX = footX + (cos >= 0f ? -1f : 1f) * (5f + i * 3f) * density;
+                float puffY = groundY - i * 1.2f * density;
+                canvas.drawCircle(puffX, puffY, (2.2f - i * .4f) * density, paint);
+            }
         }
 
-        String label = musicPaused ? "PAUSED" : "VINYL MODE";
-        paint.setTextAlign(Paint.Align.CENTER);
-        paint.setTextSize(8.5f * density);
-        paint.setColor(Color.argb(Math.round(210f * alpha), 194, 242, 248));
-        canvas.drawText(label, cx, panelBottom - 10f * density, paint);
-        if (!musicTitle.isEmpty()) {
-            String title = musicTitle.length() > 11 ? musicTitle.substring(0, 10) + "…" : musicTitle;
-            paint.setTextSize(9.5f * density);
-            paint.setColor(Color.argb(Math.round(235f * alpha), 255, 219, 149));
-            canvas.drawText(title, cx, panelTop + 16f * density, paint);
+        paint.setColor(Color.argb(Math.round((95f - jump * 42f) * alpha), 12, 18, 16));
+        float shadowScale = 1f - jump * .28f;
+        musicOval.set(footX - petWidth * .31f * shadowScale, groundY - 2.2f * density,
+                footX + petWidth * .31f * shadowScale, groundY + 3.3f * density);
+        canvas.drawOval(musicOval, paint);
+
+        float left = footX - petWidth * .5f;
+        float right = footX + petWidth * .5f;
+        float top = footY - petHeight;
+        float bottom = footY;
+        float facing = -sin >= 0f ? 1f : -1f;
+        float tilt = musicPlaying ? -run * 2.8f : 0f;
+        canvas.save();
+        pose.reset();
+        float squash = 1f - (1f - jump) * Math.abs(run) * .055f;
+        pose.postScale(facing, squash, footX, footY);
+        pose.postRotate(tilt - jump * facing * 2.2f, footX, footY - petHeight * .45f);
+        canvas.concat(pose);
+        pose.invert(inversePose);
+        drawBitmap(canvas, bitmap, left, top, right, bottom,
+                Math.round(255f * alpha), true);
+        canvas.restore();
+        drawPetGrass(canvas, footX, groundY, petWidth, density, alpha);
+
+        if (sin < -.15f) {
+            drawMusicHub(canvas, cx, cy, radius, ry, density, alpha);
         }
+    }
+
+    private void drawPetGrass(Canvas canvas, float footX, float footY, float petWidth,
+                              float density, float alpha) {
+        int season = ((int) (musicDiscAngle / 90f)) & 3;
+        int color;
+        if (season == 2) color = Color.rgb(151, 80, 29);
+        else if (season == 3) color = Color.rgb(193, 222, 218);
+        else color = Color.rgb(24, 126, 58);
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeCap(Paint.Cap.ROUND);
+        paint.setStrokeWidth(1.05f * density);
+        paint.setColor(Color.argb(Math.round(205f * alpha),
+                Color.red(color), Color.green(color), Color.blue(color)));
+        for (int i = 0; i < 11; i++) {
+            float offset = (i - 5f) / 10f * petWidth * .72f;
+            float sway = (i % 3 - 1) * 1.4f * density;
+            float blade = (3.2f + i % 4 * 1.15f) * density;
+            canvas.drawLine(footX + offset, footY + 1.5f * density,
+                    footX + offset + sway, footY - blade, paint);
+        }
+        paint.setStrokeCap(Paint.Cap.BUTT);
+        paint.setStyle(Paint.Style.FILL);
+    }
+
+    private void drawMusicCaption(Canvas canvas, String text, float width, float height,
+                                  float density, float alpha) {
+        if (text == null || text.isEmpty()) return;
+        density = musicDensity(width, height, density);
+        String display = text.length() > 30 ? text.substring(0, 29) + "…" : text;
+        if (musicPaused && !display.startsWith("四季停在这里")) display = "暂停 · " + display;
+        paint.setStyle(Paint.Style.FILL);
+        paint.setTextSize(10.2f * density);
+        float textWidth = paint.measureText(display);
+        float pillWidth = Math.min(width - 22f * density,
+                Math.max(166f * density, textWidth + 54f * density));
+        float centerY = height - 16f * density;
+        musicOval.set(width / 2f - pillWidth / 2f, centerY - 13f * density,
+                width / 2f + pillWidth / 2f, centerY + 10f * density);
+        paint.setColor(Color.argb(Math.round(218f * alpha), 18, 24, 25));
+        canvas.drawRoundRect(musicOval, 12f * density, 12f * density, paint);
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeWidth(.75f * density);
+        paint.setColor(Color.argb(Math.round(110f * alpha), 185, 214, 196));
+        canvas.drawRoundRect(musicOval, 12f * density, 12f * density, paint);
+
+        float barsLeft = musicOval.left + 15f * density;
+        float barsBottom = centerY + 4f * density;
+        paint.setStrokeCap(Paint.Cap.ROUND);
+        paint.setStrokeWidth(2.2f * density);
+        paint.setColor(Color.argb(Math.round(245f * alpha), 100, 220, 112));
+        for (int i = 0; i < 3; i++) {
+            float energy = musicPlaying
+                    ? .45f + .55f * Math.abs((float) Math.sin(
+                    Math.toRadians(musicDiscAngle * 3.2f + i * 74f))) : .25f;
+            canvas.drawLine(barsLeft + i * 5f * density, barsBottom,
+                    barsLeft + i * 5f * density,
+                    barsBottom - (4f + energy * 8f) * density, paint);
+        }
+        paint.setStrokeCap(Paint.Cap.BUTT);
+        paint.setStyle(Paint.Style.FILL);
+        paint.setTextAlign(Paint.Align.LEFT);
+        paint.setColor(Color.argb(Math.round(248f * alpha), 250, 251, 247));
+        canvas.drawText(display, musicOval.left + 38f * density,
+                centerY + 3.7f * density, paint);
     }
 
     private void drawListeningGlow(Canvas canvas, float cx, float cy, float density, double phase) {

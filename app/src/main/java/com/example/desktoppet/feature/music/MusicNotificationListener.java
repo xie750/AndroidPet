@@ -1,5 +1,6 @@
 package com.example.desktoppet.feature.music;
 
+import android.app.Notification;
 import android.content.ComponentName;
 import android.content.Context;
 import android.media.MediaMetadata;
@@ -9,12 +10,17 @@ import android.media.session.PlaybackState;
 import android.os.Handler;
 import android.os.Looper;
 import android.service.notification.NotificationListenerService;
+import android.service.notification.StatusBarNotification;
+import android.util.Log;
 
 import com.example.desktoppet.feature.pet.PetOverlayService;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -22,6 +28,7 @@ import java.util.Objects;
  * Only playback state and media metadata are consumed; notification bodies are ignored.
  */
 public final class MusicNotificationListener extends NotificationListenerService {
+    private static final String TAG = "FeiwuMusic";
     private static final int STATE_STOPPED = 0;
     private static final int STATE_PAUSED = 1;
     private static final int STATE_PLAYING = 2;
@@ -30,6 +37,7 @@ public final class MusicNotificationListener extends NotificationListenerService
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final List<MediaController> controllers = new ArrayList<>();
+    private final Map<String, Integer> notificationPlaybackHints = new HashMap<>();
     private MediaSessionManager sessionManager;
     private ComponentName listenerComponent;
 
@@ -56,12 +64,14 @@ public final class MusicNotificationListener extends NotificationListenerService
     @Override
     public void onListenerConnected() {
         super.onListenerConnected();
+        Log.i(TAG, "notification listener connected");
         sessionManager = (MediaSessionManager) getSystemService(Context.MEDIA_SESSION_SERVICE);
         listenerComponent = new ComponentName(this, MusicNotificationListener.class);
         if (sessionManager == null) return;
         try {
             sessionManager.addOnActiveSessionsChangedListener(
                     sessionsChangedListener, listenerComponent, mainHandler);
+            refreshNotificationHints();
             refreshSessions();
         } catch (SecurityException ignored) {
             publish(new Snapshot(STATE_STOPPED, "", ""));
@@ -71,6 +81,7 @@ public final class MusicNotificationListener extends NotificationListenerService
     @Override
     public void onListenerDisconnected() {
         clearControllers();
+        notificationPlaybackHints.clear();
         if (sessionManager != null) {
             try {
                 sessionManager.removeOnActiveSessionsChangedListener(sessionsChangedListener);
@@ -78,6 +89,57 @@ public final class MusicNotificationListener extends NotificationListenerService
         }
         publish(new Snapshot(STATE_STOPPED, "", ""));
         super.onListenerDisconnected();
+    }
+
+    @Override
+    public void onNotificationPosted(StatusBarNotification sbn) {
+        updateNotificationHint(sbn);
+        publishBestSession();
+    }
+
+    @Override
+    public void onNotificationRemoved(StatusBarNotification sbn) {
+        if (sbn != null) notificationPlaybackHints.remove(sbn.getPackageName());
+        publishBestSession();
+    }
+
+    private void refreshNotificationHints() {
+        notificationPlaybackHints.clear();
+        try {
+            StatusBarNotification[] active = getActiveNotifications();
+            if (active == null) return;
+            for (StatusBarNotification sbn : active) updateNotificationHint(sbn);
+        } catch (RuntimeException ignored) {}
+    }
+
+    private void updateNotificationHint(StatusBarNotification sbn) {
+        if (sbn == null || sbn.getNotification() == null) return;
+        int state = transportStateFromNotification(sbn.getNotification());
+        if (state == STATE_STOPPED) return;
+        notificationPlaybackHints.put(sbn.getPackageName(), state);
+        Log.d(TAG, "transport hint package=" + sbn.getPackageName() + " state=" + state);
+    }
+
+    /**
+     * Some players (notably certain Luna Music builds) keep their MediaSession in PAUSED while
+     * audio is actually playing. Their transport notification remains authoritative: a visible
+     * Pause action means playback is active, while a Play action means it is paused.
+     */
+    private int transportStateFromNotification(Notification notification) {
+        boolean transport = Notification.CATEGORY_TRANSPORT.equals(notification.category)
+                || (notification.extras != null
+                && notification.extras.getParcelable(Notification.EXTRA_MEDIA_SESSION) != null);
+        if (!transport || notification.actions == null) return STATE_STOPPED;
+        for (Notification.Action action : notification.actions) {
+            if (action == null) continue;
+            String title = action.title == null ? ""
+                    : action.title.toString().trim().toLowerCase(Locale.ROOT);
+            if (title.equals("pause") || title.contains("暂停")) return STATE_PLAYING;
+            if (title.equals("play") || title.contains("播放") || title.contains("继续")) {
+                return STATE_PAUSED;
+            }
+        }
+        return STATE_STOPPED;
     }
 
     private void refreshSessions() {
@@ -124,6 +186,11 @@ public final class MusicNotificationListener extends NotificationListenerService
                 publish(snapshotOf(controller, STATE_PLAYING));
                 return;
             }
+            if (notificationPlaybackHints.getOrDefault(controller.getPackageName(), STATE_STOPPED)
+                    == STATE_PLAYING) {
+                publish(snapshotOf(controller, STATE_PLAYING));
+                return;
+            }
             if (state == PlaybackState.STATE_PAUSED && pausedCandidate == null) {
                 pausedCandidate = controller;
             }
@@ -152,6 +219,7 @@ public final class MusicNotificationListener extends NotificationListenerService
         Snapshot previous = latest;
         latest = snapshot;
         if (previous.equals(snapshot)) return;
+        Log.d(TAG, "publish state=" + snapshot.state);
         boolean enabled = getSharedPreferences("pet_settings", MODE_PRIVATE)
                 .getBoolean("music_companion_enabled", true);
         if (!enabled) {
@@ -169,6 +237,11 @@ public final class MusicNotificationListener extends NotificationListenerService
     public static void syncCurrentState(Context context) {
         boolean enabled = context.getSharedPreferences("pet_settings", Context.MODE_PRIVATE)
                 .getBoolean("music_companion_enabled", true);
+        if (enabled) {
+            try {
+                requestRebind(new ComponentName(context, MusicNotificationListener.class));
+            } catch (RuntimeException ignored) {}
+        }
         Snapshot snapshot = latest;
         if (!enabled || snapshot.state != STATE_PLAYING) return;
         PetOverlayService.setMusicPlayback(true, false, snapshot.title, snapshot.artist);

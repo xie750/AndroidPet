@@ -9,6 +9,8 @@ import android.graphics.Canvas;
 import android.os.Bundle;
 import android.os.SystemClock;
 import android.view.MotionEvent;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.lang.reflect.Field;
 
 /** Exercises the installed overlay inside its own process, without system input injection. */
@@ -64,7 +66,32 @@ public final class PetMotionCheck extends Instrumentation {
             int[] resting = location();
             if (dragged[0] >= before[0]-65 || settled[0] >= dragged[0]-4
                     || Math.abs(resting[0]-settled[0])>2) throw new AssertionError("Drag/coast/settle failed");
+            runOnMainSync(() -> view.setMusicPlayback(true, false, "四季轮回", "费雾"));
+            SystemClock.sleep(900);
+            waitForIdleSync();
+            File snapshot = new File(context.getExternalFilesDir(null), "music-season-stage.png");
+            runOnMainSync(() -> {
+                if (view.getWidth() <= view.getHeight()) {
+                    throw new AssertionError("Music overlay did not expand horizontally");
+                }
+                Bitmap frame = Bitmap.createBitmap(view.getWidth(), view.getHeight(), Bitmap.Config.ARGB_8888);
+                view.draw(new Canvas(frame));
+                int centerAlpha = frame.getPixel(frame.getWidth()/2, Math.round(frame.getHeight()*.54f)) >>> 24;
+                int cornerAlpha = frame.getPixel(0, 0) >>> 24;
+                if (centerAlpha < 100) throw new AssertionError("Season stage center is empty");
+                if (cornerAlpha > 8) throw new AssertionError("Music scene lost transparent background");
+                try (FileOutputStream stream = new FileOutputStream(snapshot)) {
+                    if (!frame.compress(Bitmap.CompressFormat.PNG, 100, stream)) {
+                        throw new AssertionError("Music snapshot encoding failed");
+                    }
+                } catch (Exception exception) {
+                    throw new AssertionError("Music snapshot failed", exception);
+                } finally {
+                    frame.recycle();
+                }
+            });
             result.putString("positions",before[0]+" -> "+dragged[0]+" -> "+settled[0]+" -> "+resting[0]);
+            result.putString("musicSnapshot", snapshot.getAbsolutePath());
             finish(Activity.RESULT_OK,result);
         } catch (Throwable failure) {
             result.putString("failure",failure.toString());
