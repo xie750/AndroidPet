@@ -2,7 +2,6 @@ package com.example.desktoppet.feature.pet;
 
 import android.annotation.SuppressLint;
 import android.content.Context;
-import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -20,7 +19,6 @@ import android.view.MotionEvent;
 import android.view.View;
 
 import com.example.desktoppet.R;
-import com.example.desktoppet.ui.MainActivity;
 
 import java.util.Random;
 
@@ -33,6 +31,10 @@ public final class PetView extends View {
 
     interface MusicSceneListener {
         void onVisibilityChanged(boolean visible);
+    }
+
+    interface QuickActionListener {
+        void onQuickActionsRequested();
     }
 
     public enum Action {
@@ -48,6 +50,7 @@ public final class PetView extends View {
     private final Random random = new Random();
     private final DragListener dragListener;
     private final MusicSceneListener musicSceneListener;
+    private QuickActionListener quickActionListener;
     private Bitmap skinBitmap;
     private Bitmap pettedBitmap;
     private Bitmap pokedBitmap;
@@ -64,6 +67,7 @@ public final class PetView extends View {
     private boolean moved;
     private boolean stroked;
     private boolean longPressed;
+    private boolean touchingMusicStage;
     private boolean speaking;
     private final PetRig rig = new PetRig();
     private final android.graphics.Matrix pose = new android.graphics.Matrix();
@@ -96,12 +100,14 @@ public final class PetView extends View {
     private final RectF musicOval = new RectF();
     private final Path musicPath = new Path();
 
-    PetView(Context context, DragListener dragListener, MusicSceneListener musicSceneListener) {
+    PetView(Context context, DragListener dragListener, MusicSceneListener musicSceneListener,
+            QuickActionListener quickActionListener) {
         super(context);
         this.dragListener = dragListener;
         this.musicSceneListener = musicSceneListener;
+        this.quickActionListener = quickActionListener;
         setLayerType(View.LAYER_TYPE_HARDWARE, null);
-        setContentDescription("费雾桌宠，点击互动，长按打开待办");
+        setContentDescription("费雾桌宠，点击互动，长按打开快捷菜单");
         reloadSkin();
     }
 
@@ -544,6 +550,7 @@ public final class PetView extends View {
         if (musicLastFrameAt == 0L) musicLastFrameAt = now;
         float dt = Math.min(.05f, Math.max(0f, (now - musicLastFrameAt) / 1000f));
         musicLastFrameAt = now;
+        if (action == Action.DRAG) return;
         if (!musicPlaying) return;
         musicDiscAngle = (musicDiscAngle + dt * 15f) % 360f;
         musicRunPhase = (float) ((musicRunPhase + dt * .68f) % (Math.PI * 2.0));
@@ -1019,15 +1026,28 @@ public final class PetView extends View {
                 hitPoint[0] = event.getX();
                 hitPoint[1] = event.getY();
                 inversePose.mapPoints(hitPoint);
-                if (renderedBitmap == null || !rig.texturePoint(hitPoint[0], hitPoint[1], hitPoint)) return false;
-                touchNormalizedX = hitPoint[0];
-                touchNormalizedY = hitPoint[1];
-                int px = Math.min(renderedBitmap.getWidth()-1, (int)(touchNormalizedX * renderedBitmap.getWidth()));
-                int py = Math.min(renderedBitmap.getHeight()-1, (int)(touchNormalizedY * renderedBitmap.getHeight()));
-                if (Color.alpha(renderedBitmap.getPixel(px, py)) < 20) return false;
+                boolean petHit = renderedBitmap != null &&
+                        rig.texturePoint(hitPoint[0], hitPoint[1], hitPoint);
+                if (petHit) {
+                    touchNormalizedX = hitPoint[0];
+                    touchNormalizedY = hitPoint[1];
+                    int px = Math.max(0, Math.min(renderedBitmap.getWidth() - 1,
+                            (int) (touchNormalizedX * renderedBitmap.getWidth())));
+                    int py = Math.max(0, Math.min(renderedBitmap.getHeight() - 1,
+                            (int) (touchNormalizedY * renderedBitmap.getHeight())));
+                    petHit = Color.alpha(renderedBitmap.getPixel(px, py)) >= 20;
+                }
+                touchingMusicStage = !petHit && musicSceneVisible &&
+                        isMusicStageHit(event.getX(), event.getY());
+                if (!petHit && !touchingMusicStage) return false;
                 touching = true;
                 carryX = carryY = 0;
-                rig.grab(touchNormalizedX, touchNormalizedY, event.getEventTime());
+                if (petHit) {
+                    rig.grab(touchNormalizedX, touchNormalizedY, event.getEventTime());
+                } else {
+                    touchNormalizedX = .5f;
+                    touchNormalizedY = .5f;
+                }
                 downRawX = lastRawX = event.getRawX();
                 downRawY = lastRawY = event.getRawY();
                 downAt = event.getEventTime();
@@ -1036,12 +1056,14 @@ public final class PetView extends View {
                 longPressed = false;
                 lastInteractionAt = System.currentTimeMillis();
                 nextAutonomousAt = lastInteractionAt + 9000L + random.nextInt(7000);
-                if (action == Action.SLEEP) {
+                if (touchingMusicStage) {
+                    action = Action.IDLE;
+                } else if (action == Action.SLEEP) {
                     showMessage("唔……你来啦", Action.OBSERVE, 1800L);
                 } else {
                     setAction(Action.OBSERVE, 700L);
                 }
-                handler.postDelayed(longPressRunnable, 780L);
+                if (!touchingMusicStage) handler.postDelayed(longPressRunnable, 780L);
                 return true;
             case MotionEvent.ACTION_MOVE:
                 float dx = event.getRawX() - lastRawX;
@@ -1050,15 +1072,18 @@ public final class PetView extends View {
                 float totalDy = event.getRawY() - downRawY;
                 float distance = (float) Math.hypot(totalDx, totalDy);
                 float density = getResources().getDisplayMetrics().density;
-                rig.sample(dx / density, dy / density, event.getEventTime());
-                if (moved || distance > (stroked ? 22f : 13f) * density) {
+                if (!touchingMusicStage) {
+                    rig.sample(dx / density, dy / density, event.getEventTime());
+                }
+                float dragThreshold = touchingMusicStage ? 5f : (stroked ? 22f : 13f);
+                if (moved || distance > dragThreshold * density) {
                     if (!moved) { dx = totalDx; dy = totalDy; }
                     moved = true;
                     stroked = false;
                     action = Action.DRAG;
                     handler.removeCallbacks(longPressRunnable);
                     dragListener.moveBy(Math.round(dx), Math.round(dy));
-                } else if (event.getEventTime() - downAt > 130L &&
+                } else if (!touchingMusicStage && event.getEventTime() - downAt > 130L &&
                         touchNormalizedY < .68f && distance > 5f * density) {
                     stroked = true;
                     action = Action.PET;
@@ -1075,7 +1100,11 @@ public final class PetView extends View {
                 handler.removeCallbacks(longPressRunnable);
                 touching = false;
                 boolean canceled = event.getActionMasked() == MotionEvent.ACTION_CANCEL;
-                rig.release(event.getEventTime(), moved && !canceled);
+                boolean wasMusicStageTouch = touchingMusicStage;
+                touchingMusicStage = false;
+                if (!wasMusicStageTouch) {
+                    rig.release(event.getEventTime(), moved && !canceled);
+                }
                 if (canceled) {
                     setAction(Action.IDLE, 0);
                     return true;
@@ -1084,6 +1113,8 @@ public final class PetView extends View {
                 if (moved) {
                     setAction(Action.LAND, 760L);
                     performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK);
+                } else if (wasMusicStageTouch) {
+                    setAction(Action.IDLE, 0L);
                 } else if (stroked) {
                     String[] phrases = {"嗯……再摸一下", "这里很舒服", "尾巴都要藏不住啦"};
                     showMessage(phrases[random.nextInt(phrases.length)], Action.PET, 2300L);
@@ -1102,6 +1133,19 @@ public final class PetView extends View {
         }
     }
 
+    private boolean isMusicStageHit(float x, float y) {
+        float density = musicDensity(getWidth(), getHeight(),
+                getResources().getDisplayMetrics().density);
+        float cx = getWidth() * .5f;
+        float cy = getHeight() * .50f;
+        float radius = Math.min(getWidth() * .465f, 168f * density);
+        float radiusY = radius * .42f + 10f * density;
+        if (radius <= 0f || radiusY <= 0f) return false;
+        float normalizedX = (x - cx) / radius;
+        float normalizedY = (y - cy) / radiusY;
+        return normalizedX * normalizedX + normalizedY * normalizedY <= 1.08f;
+    }
+
     @Override
     public boolean performClick() {
         super.performClick();
@@ -1111,13 +1155,8 @@ public final class PetView extends View {
     private final Runnable longPressRunnable = () -> {
         if (moved || stroked) return;
         longPressed = true;
-        showMessage("抱一下……再帮你记事", Action.PET, 1500L);
+        showMessage("想做什么？", Action.PET, 1500L);
         performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
-        handler.postDelayed(() -> {
-            Intent intent = new Intent(getContext(), MainActivity.class)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                    .putExtra(MainActivity.EXTRA_QUICK_ADD, true);
-            getContext().startActivity(intent);
-        }, 350L);
+        quickActionListener.onQuickActionsRequested();
     };
 }

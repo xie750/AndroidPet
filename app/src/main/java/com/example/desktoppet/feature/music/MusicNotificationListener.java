@@ -89,6 +89,7 @@ public final class MusicNotificationListener extends NotificationListenerService
         }
         publish(new Snapshot(STATE_STOPPED, "", ""));
         super.onListenerDisconnected();
+        requestSystemRebind(this);
     }
 
     @Override
@@ -223,10 +224,11 @@ public final class MusicNotificationListener extends NotificationListenerService
         boolean enabled = getSharedPreferences("pet_settings", MODE_PRIVATE)
                 .getBoolean("music_companion_enabled", true);
         if (!enabled) {
-            PetOverlayService.setMusicPlayback(false, false, "", "");
+            PetOverlayService.handleMusicPlayback(this, false, false, "", "");
             return;
         }
-        PetOverlayService.setMusicPlayback(
+        PetOverlayService.handleMusicPlayback(
+                this,
                 snapshot.state == STATE_PLAYING,
                 snapshot.state == STATE_PAUSED,
                 snapshot.title,
@@ -244,7 +246,26 @@ public final class MusicNotificationListener extends NotificationListenerService
         }
         Snapshot snapshot = latest;
         if (!enabled || snapshot.state != STATE_PLAYING) return;
-        PetOverlayService.setMusicPlayback(true, false, snapshot.title, snapshot.artist);
+        PetOverlayService.handleMusicPlayback(
+                context, true, false, snapshot.title, snapshot.artist);
+    }
+
+    /**
+     * Asks Android to restore the lightweight system-owned listener after boot, an app update,
+     * or an OEM background-process reclaim. This does not start the visible pet or a foreground
+     * service; it only restores the callback that can notice the next media session.
+     */
+    public static void requestSystemRebind(Context context) {
+        if (context == null) return;
+        boolean enabled = context.getSharedPreferences("pet_settings", Context.MODE_PRIVATE)
+                .getBoolean("music_companion_enabled", true);
+        if (!enabled) return;
+        try {
+            requestRebind(new ComponentName(context, MusicNotificationListener.class));
+            Log.i(TAG, "music listener rebind requested");
+        } catch (RuntimeException exception) {
+            Log.w(TAG, "music listener rebind rejected", exception);
+        }
     }
 
     private static final class Snapshot {

@@ -6,6 +6,7 @@ import android.content.Intent;
 import android.provider.Settings;
 
 import com.example.desktoppet.data.AppDatabase;
+import com.example.desktoppet.feature.music.MusicNotificationListener;
 import com.example.desktoppet.feature.pet.PetOverlayService;
 import com.example.desktoppet.feature.reminder.ReminderScheduler;
 import com.example.desktoppet.model.Item;
@@ -25,7 +26,10 @@ public class BootReceiver extends BroadcastReceiver {
 
         boolean autoStart = context.getSharedPreferences("pet_settings", Context.MODE_PRIVATE)
                 .getBoolean("auto_start", false);
-        if (autoStart && Settings.canDrawOverlays(context)) {
+        boolean musicOnly = context.getSharedPreferences("pet_settings", Context.MODE_PRIVATE)
+                .getBoolean("music_companion_enabled", true);
+        if (musicOnly) MusicNotificationListener.requestSystemRebind(context);
+        if (autoStart && !musicOnly && Settings.canDrawOverlays(context)) {
             Intent serviceIntent = new Intent(context, PetOverlayService.class);
             try {
                 context.startForegroundService(serviceIntent);

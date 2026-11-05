@@ -90,6 +90,27 @@ public final class PetMotionCheck extends Instrumentation {
                     frame.recycle();
                 }
             });
+            int[] musicBefore = location();
+            runOnMainSync(() -> {
+                rawX = musicBefore[0] + view.getWidth() / 2f;
+                rawY = musicBefore[1] + view.getHeight() * .50f;
+                down = SystemClock.uptimeMillis();
+            });
+            touch(MotionEvent.ACTION_DOWN);
+            for (int i = 0; i < 6; i++) {
+                SystemClock.sleep(18);
+                rawX += 10f;
+                rawY += 4f;
+                touch(MotionEvent.ACTION_MOVE);
+            }
+            int[] musicDragged = location();
+            float centerOffsetX = musicDragged[0] + view.getWidth() / 2f - rawX;
+            float centerOffsetY = musicDragged[1] + view.getHeight() * .50f - rawY;
+            touch(MotionEvent.ACTION_UP);
+            if (musicDragged[0] < musicBefore[0] + 35 ||
+                    Math.abs(centerOffsetX) > 8f || Math.abs(centerOffsetY) > 8f) {
+                throw new AssertionError("Music stage drag lost pointer anchor");
+            }
             result.putString("positions",before[0]+" -> "+dragged[0]+" -> "+settled[0]+" -> "+resting[0]);
             result.putString("musicSnapshot", snapshot.getAbsolutePath());
             finish(Activity.RESULT_OK,result);

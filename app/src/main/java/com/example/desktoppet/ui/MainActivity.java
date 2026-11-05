@@ -60,6 +60,8 @@ import java.util.Locale;
 
 public class MainActivity extends Activity {
     public static final String EXTRA_QUICK_ADD = "quick_add";
+    public static final String EXTRA_QUICK_NOTE = "quick_note";
+    public static final String EXTRA_OPEN_PAGE = "open_page";
     private static final int REQUEST_NOTIFICATIONS = 2001;
     private static final int REQUEST_MICROPHONE = 2002;
     private static final int DEEP_NAVY = Color.rgb(3, 8, 23);
@@ -91,6 +93,8 @@ public class MainActivity extends Activity {
     private ImageView startupMascot;
     private boolean showStartupAnimation;
     private boolean quickAddHandled;
+    private boolean quickNoteHandled;
+    private boolean quickPageHandled;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -103,11 +107,11 @@ public class MainActivity extends Activity {
         AlarmReceiver.ensureChannel(this);
         migrateToOfficialSkins();
         showStartupAnimation = savedInstanceState == null &&
-                !getIntent().getBooleanExtra(EXTRA_QUICK_ADD, false);
+                !hasQuickAction(getIntent());
         setContentView(buildScreen());
         refreshList();
         if (showStartupAnimation) startStartupSequence();
-        handleQuickAdd(getIntent());
+        handleQuickAction(getIntent());
     }
 
     @Override
@@ -115,7 +119,9 @@ public class MainActivity extends Activity {
         super.onNewIntent(intent);
         setIntent(intent);
         quickAddHandled = false;
-        handleQuickAdd(intent);
+        quickNoteHandled = false;
+        quickPageHandled = false;
+        handleQuickAction(intent);
     }
 
     @Override
@@ -589,12 +595,12 @@ public class MainActivity extends Activity {
         LinearLayout layout = card();
         layout.addView(text("VINYL COMPANION · 黑胶伴听", 16, TEXT, true));
         layout.addView(space(5));
-        layout.addView(text("音乐开始时，桌宠会召唤黑胶唱机并随节奏摇摆；暂停、切歌和停止都有独立动作。",
+        layout.addView(text("无需预先开启桌宠：音乐播放时自动启动并展示四季唱片；暂停或停止后自动淡出并关闭。",
                 13, TEXT_MUTED, false));
         layout.addView(space(10));
 
         CheckBox enabled = new CheckBox(this);
-        enabled.setText("播放音乐时自动进入伴听场景");
+        enabled.setText("仅在播放音乐时自动显示");
         enabled.setTextColor(TEXT);
         enabled.setButtonTintList(new ColorStateList(
                 new int[][]{new int[]{android.R.attr.state_checked}, new int[]{}},
@@ -611,6 +617,14 @@ public class MainActivity extends Activity {
         musicPermissionStatus.setPadding(0, dp(6), 0, dp(10));
         layout.addView(musicPermissionStatus);
         layout.addView(outlineButton("开启音乐识别权限", v -> openMusicAccessSettings()), matchWrap());
+        if (isXiaomi()) {
+            layout.addView(space(7));
+            layout.addView(outlineButton("允许小米 / 红米后台自动唤醒",
+                    v -> openVendorSettings()), matchWrap());
+            layout.addView(space(6));
+            layout.addView(text("HyperOS 必须允许费雾自启动；否则应用进程被清理后，系统不会通知费雾音乐已经开始。",
+                    11, 0xFFFFB86B, false));
+        }
         layout.addView(space(7));
         layout.addView(text("权限只用于读取系统媒体会话的播放状态和歌曲信息；不保存其他通知内容。",
                 11, TEXT_MUTED, false));
@@ -1079,12 +1093,29 @@ public class MainActivity extends Activity {
         return maker.contains("xiaomi") || brand.contains("redmi") || brand.contains("poco");
     }
 
-    private void handleQuickAdd(Intent intent) {
+    private void handleQuickAction(Intent intent) {
         if (!quickAddHandled && intent != null && intent.getBooleanExtra(EXTRA_QUICK_ADD, false)) {
             quickAddHandled = true;
             intent.removeExtra(EXTRA_QUICK_ADD);
             showTaskDialog();
         }
+        if (!quickNoteHandled && intent != null && intent.getBooleanExtra(EXTRA_QUICK_NOTE, false)) {
+            quickNoteHandled = true;
+            intent.removeExtra(EXTRA_QUICK_NOTE);
+            showNoteDialog();
+        }
+        if (!quickPageHandled && intent != null && intent.hasExtra(EXTRA_OPEN_PAGE)) {
+            quickPageHandled = true;
+            int page = intent.getIntExtra(EXTRA_OPEN_PAGE, 0);
+            intent.removeExtra(EXTRA_OPEN_PAGE);
+            switchPage(Math.max(0, Math.min(3, page)));
+        }
+    }
+
+    private boolean hasQuickAction(Intent intent) {
+        return intent != null && (intent.getBooleanExtra(EXTRA_QUICK_ADD, false) ||
+                intent.getBooleanExtra(EXTRA_QUICK_NOTE, false) ||
+                intent.hasExtra(EXTRA_OPEN_PAGE));
     }
 
     private String formatTime(long time) {
