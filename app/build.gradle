@@ -14,8 +14,9 @@ android {
         applicationId "com.example.desktoppet"
         minSdk 26
         targetSdk 35
-        versionCode 5
-        versionName "0.5.0"
+        versionCode 8
+        versionName "0.7.1"
+        testInstrumentationRunner "com.example.desktoppet.feature.pet.PetMotionCheck"
         buildConfigField "String", "ASSISTANT_ENDPOINT", javaString(assistantEndpoint)
         buildConfigField "String", "ASSISTANT_CLIENT_TOKEN", javaString(assistantClientToken)
     }

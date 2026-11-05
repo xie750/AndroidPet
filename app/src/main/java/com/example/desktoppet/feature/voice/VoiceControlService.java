@@ -29,7 +29,9 @@ import org.vosk.android.SpeechService;
 import org.vosk.android.StorageService;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 
@@ -39,6 +41,7 @@ public class VoiceControlService extends Service implements RecognitionListener 
     public static final String ACTION_PREVIEW_TTS = "com.example.desktoppet.PREVIEW_TTS";
     private static final String CHANNEL_ID = "voice_control";
     private static final int NOTIFICATION_ID = 88;
+    private static final long FOLLOW_UP_WINDOW_MS = 12_000L;
     private static volatile boolean running;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -55,6 +58,13 @@ public class VoiceControlService extends Service implements RecognitionListener 
     private boolean modelLoading;
     private boolean understanding;
     private String pendingMode = "";
+    private final Runnable followUpTimeout = () -> {
+        if (!running || speaking || understanding ||
+                System.currentTimeMillis() <= awakenedUntil) return;
+        awakenedUntil = 0L;
+        PetOverlayService.showAssistantMessage("连续对话已结束，需要时再叫我", PetView.Action.IDLE);
+        updateNotification("正在等待“你好费雾”");
+    };
 
     @Override
     public void onCreate() {
@@ -183,7 +193,7 @@ public class VoiceControlService extends Service implements RecognitionListener 
                         if (stoppingAfterReply) {
                             stopSelf();
                         } else if (speechService != null) {
-                            speechService.setPause(false);
+                            resumeListeningAfterReply();
                         }
                     });
                 }
@@ -197,18 +207,18 @@ public class VoiceControlService extends Service implements RecognitionListener 
         String profile = getSharedPreferences("pet_settings", MODE_PRIVATE)
                 .getString("tts_profile", "natural");
         tts.setLanguage(Locale.SIMPLIFIED_CHINESE);
-        float rate = 0.96f;
-        float pitch = 1.02f;
+        float rate = 0.97f;
+        float pitch = 1.00f;
         boolean offlineOnly = false;
         if ("gentle".equals(profile)) {
-            rate = 0.90f;
-            pitch = 1.06f;
+            rate = 0.86f;
+            pitch = 0.92f;
         } else if ("bright".equals(profile)) {
-            rate = 1.03f;
-            pitch = 1.12f;
+            rate = 1.10f;
+            pitch = 1.18f;
         } else if ("offline".equals(profile)) {
             rate = 0.96f;
-            pitch = 1.01f;
+            pitch = 1.00f;
             offlineOnly = true;
         } else if ("system".equals(profile)) {
             tts.setSpeechRate(1.0f);
@@ -217,22 +227,43 @@ public class VoiceControlService extends Service implements RecognitionListener 
         }
         tts.setSpeechRate(rate);
         tts.setPitch(pitch);
-        selectBestChineseVoice(offlineOnly);
+        selectChineseVoice(profile, offlineOnly);
     }
 
-    private void selectBestChineseVoice(boolean offlineOnly) {
+    private void selectChineseVoice(String profile, boolean offlineOnly) {
         if (tts == null) return;
         Set<Voice> voices = tts.getVoices();
         if (voices == null) return;
-        Voice best = voices.stream()
-                .filter(voice -> voice.getLocale() != null &&
-                        "zh".equalsIgnoreCase(voice.getLocale().getLanguage()))
-                .filter(voice -> !offlineOnly || !voice.isNetworkConnectionRequired())
-                .max(Comparator.comparingInt(voice ->
-                        voice.getQuality() * 100 - voice.getLatency() +
-                                (voice.isNetworkConnectionRequired() && !offlineOnly ? 500 : 0)))
-                .orElse(null);
-        if (best != null) tts.setVoice(best);
+        List<Voice> candidates = new ArrayList<>();
+        for (Voice voice : voices) {
+            if (voice.getLocale() == null ||
+                    !"zh".equalsIgnoreCase(voice.getLocale().getLanguage())) continue;
+            if (offlineOnly && voice.isNetworkConnectionRequired()) continue;
+            candidates.add(voice);
+        }
+        candidates.sort(Comparator
+                .comparingInt(this::scoreChineseVoice).reversed()
+                .thenComparing(Voice::getName));
+        if (candidates.isEmpty()) return;
+
+        int index = 0;
+        if ("gentle".equals(profile) && candidates.size() > 1) {
+            index = 1;
+        } else if ("bright".equals(profile)) {
+            index = candidates.size() > 2 ? 2 : candidates.size() - 1;
+        }
+        Voice selected = candidates.get(index);
+        if (tts.setVoice(selected) != TextToSpeech.SUCCESS && index != 0) {
+            tts.setVoice(candidates.get(0));
+        }
+    }
+
+    private int scoreChineseVoice(Voice voice) {
+        String country = voice.getLocale().getCountry();
+        int localeScore = "CN".equalsIgnoreCase(country) ? 10_000 :
+                (country == null || country.isEmpty() ? 5_000 : 0);
+        int networkBonus = voice.isNetworkConnectionRequired() ? 500 : 0;
+        return localeScore + voice.getQuality() * 100 - voice.getLatency() + networkBonus;
     }
 
     private String extractText(String hypothesis, String key) {
@@ -252,7 +283,7 @@ public class VoiceControlService extends Service implements RecognitionListener 
                 .replaceAll("[，。！？,.!? ]", "");
         boolean hasWake = normalized.contains("费雾");
         if (hasWake) {
-            awakenedUntil = System.currentTimeMillis() + 12_000L;
+            beginConversationTurn();
             PetOverlayService.showAssistantMessage("我在，正在听", PetView.Action.LISTEN);
             updateNotification("已唤醒，正在听命令");
             String afterWake = normalized.replace("你好费雾", "")
@@ -266,11 +297,17 @@ public class VoiceControlService extends Service implements RecognitionListener 
             return;
         }
         if (System.currentTimeMillis() <= awakenedUntil) {
+            if (isConversationEnd(normalized)) {
+                endConversation();
+                speakReply("好的，有事再叫我。", false, PetView.Action.IDLE);
+                return;
+            }
             processCommand(text);
         }
     }
 
     private void processCommand(String text) {
+        beginConversationTurn();
         PetOverlayService.showAssistantMessage("正在理解：" + shorten(text), PetView.Action.THINK);
         String commandText = text;
         if ("TASK".equals(pendingMode)) commandText = "提醒我" + text;
@@ -326,8 +363,6 @@ public class VoiceControlService extends Service implements RecognitionListener 
             getSharedPreferences("pet_settings", MODE_PRIVATE).edit()
                     .putBoolean("voice_enabled", false).apply();
         }
-        awakenedUntil = result.action == PetView.Action.LISTEN
-                ? System.currentTimeMillis() + 12_000L : 0L;
         speakReply(result.reply, result.stopVoice, result.action);
     }
 
@@ -344,8 +379,35 @@ public class VoiceControlService extends Service implements RecognitionListener 
             PetOverlayService.setAssistantSpeaking(false);
             speaking = false;
             if (stopAfter) handler.postDelayed(this::stopSelf, 1200L);
-            else if (speechService != null) handler.postDelayed(() -> speechService.setPause(false), 900L);
+            else if (speechService != null) handler.postDelayed(this::resumeListeningAfterReply, 900L);
         }
+    }
+
+    private void beginConversationTurn() {
+        handler.removeCallbacks(followUpTimeout);
+        awakenedUntil = Long.MAX_VALUE;
+    }
+
+    private void resumeListeningAfterReply() {
+        if (!running || speechService == null) return;
+        speechService.setPause(false);
+        if (awakenedUntil == 0L) return;
+        awakenedUntil = System.currentTimeMillis() + FOLLOW_UP_WINDOW_MS;
+        PetOverlayService.showAssistantMessage("我还在听，可以直接继续说", PetView.Action.LISTEN);
+        updateNotification("连续对话中，可以直接继续说");
+        handler.removeCallbacks(followUpTimeout);
+        handler.postDelayed(followUpTimeout, FOLLOW_UP_WINDOW_MS + 100L);
+    }
+
+    private void endConversation() {
+        handler.removeCallbacks(followUpTimeout);
+        awakenedUntil = 0L;
+        pendingMode = "";
+    }
+
+    private boolean isConversationEnd(String text) {
+        return text.contains("谢谢") || text.contains("不用了") || text.contains("没事了") ||
+                text.contains("结束对话") || text.contains("先这样") || text.contains("再见");
     }
 
     private String shorten(String text) {

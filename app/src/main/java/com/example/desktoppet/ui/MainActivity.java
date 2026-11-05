@@ -5,6 +5,7 @@ import android.app.Activity;
 import android.app.AlarmManager;
 import android.app.AlertDialog;
 import android.app.DatePickerDialog;
+import android.app.NotificationManager;
 import android.app.TimePickerDialog;
 import android.content.ComponentName;
 import android.content.Context;
@@ -43,6 +44,7 @@ import android.widget.AdapterView;
 
 import com.example.desktoppet.R;
 import com.example.desktoppet.data.AppDatabase;
+import com.example.desktoppet.feature.music.MusicNotificationListener;
 import com.example.desktoppet.feature.pet.PetOverlayService;
 import com.example.desktoppet.feature.pet.SkinCatalog;
 import com.example.desktoppet.feature.reminder.AlarmReceiver;
@@ -60,7 +62,6 @@ public class MainActivity extends Activity {
     public static final String EXTRA_QUICK_ADD = "quick_add";
     private static final int REQUEST_NOTIFICATIONS = 2001;
     private static final int REQUEST_MICROPHONE = 2002;
-    private static final int REQUEST_CUSTOM_SKIN = 2003;
     private static final int DEEP_NAVY = Color.rgb(3, 8, 23);
     private static final int SURFACE = Color.rgb(9, 28, 54);
     private static final int SURFACE_HIGH = Color.rgb(13, 42, 72);
@@ -76,6 +77,7 @@ public class MainActivity extends Activity {
     private TextView permissionStatus;
     private Button petToggleButton;
     private Button voiceToggleButton;
+    private TextView musicPermissionStatus;
     private ImageView skinPreview;
     private TextView skinDescription;
     private FrameLayout pageHost;
@@ -99,6 +101,7 @@ public class MainActivity extends Activity {
         window.getDecorView().setSystemUiVisibility(0);
         db = new AppDatabase(this);
         AlarmReceiver.ensureChannel(this);
+        migrateToOfficialSkins();
         showStartupAnimation = savedInstanceState == null &&
                 !getIntent().getBooleanExtra(EXTRA_QUICK_ADD, false);
         setContentView(buildScreen());
@@ -119,6 +122,7 @@ public class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         updatePermissionStatus();
+        updateMusicPermissionStatus();
         updateVoiceButton();
         refreshList();
         SharedPreferences prefs = getSharedPreferences("pet_settings", MODE_PRIVATE);
@@ -134,25 +138,6 @@ public class MainActivity extends Activity {
         startupHandler.removeCallbacksAndMessages(null);
         db.close();
         super.onDestroy();
-    }
-
-    @Override
-    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode != REQUEST_CUSTOM_SKIN || resultCode != RESULT_OK || data == null) return;
-        Uri uri = data.getData();
-        if (uri == null) return;
-        try {
-            getContentResolver().takePersistableUriPermission(
-                    uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
-        } catch (SecurityException ignored) {}
-        getSharedPreferences("pet_settings", MODE_PRIVATE).edit()
-                .putString("custom_skin_uri", uri.toString())
-                .putInt("selected_skin", -1)
-                .apply();
-        showSkinPreview(-1);
-        refreshRunningPet();
-        toast("自定义形象已应用");
     }
 
     @Override
@@ -275,9 +260,11 @@ public class MainActivity extends Activity {
     }
 
     private View buildCompanionPage() {
-        LinearLayout content = pageContent("COMPANION", "形象和声音只在伙伴页配置，修改后立即同步桌宠。");
+        LinearLayout content = pageContent("COMPANION", "官方形象、音乐陪伴和声音都在这里配置。");
         content.addView(sectionTitle("桌宠形象"));
         content.addView(buildSkinCard(), matchWrap());
+        content.addView(sectionTitle("音乐陪伴"));
+        content.addView(buildMusicCard(), matchWrap());
         content.addView(sectionTitle("语音互动"));
         content.addView(buildVoiceCard(), matchWrap());
         return scrollPage(content);
@@ -549,37 +536,22 @@ public class MainActivity extends Activity {
 
         Spinner skinSpinner = new Spinner(this);
         String[] builtInNames = SkinCatalog.names();
-        boolean hasCustom = !prefs.getString("custom_skin_uri", "").isEmpty();
-        String[] displayNames;
-        if (hasCustom) {
-            displayNames = new String[builtInNames.length + 1];
-            System.arraycopy(builtInNames, 0, displayNames, 0, builtInNames.length);
-            displayNames[builtInNames.length] = "自定义形象";
-        } else {
-            displayNames = builtInNames;
-        }
-        skinSpinner.setAdapter(darkSpinnerAdapter(displayNames));
+        skinSpinner.setAdapter(darkSpinnerAdapter(builtInNames));
         skinSpinner.setBackground(fieldSurface());
-        int selected = prefs.getInt("selected_skin", 1);
-        skinSpinner.setSelection(selected == -1 && hasCustom
-                ? builtInNames.length : SkinCatalog.safeIndex(selected));
+        int selected = SkinCatalog.safeIndex(prefs.getInt("selected_skin", 1));
+        skinSpinner.setSelection(selected);
         showSkinPreview(selected);
         skinSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override
             public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
-                int selectedValue = position == SkinCatalog.BUILT_INS.length ? -1 : position;
-                prefs.edit().putInt("selected_skin", selectedValue).apply();
-                showSkinPreview(selectedValue);
+                prefs.edit().putInt("selected_skin", position).apply();
+                showSkinPreview(position);
                 refreshRunningPet();
             }
 
             @Override public void onNothingSelected(AdapterView<?> parent) {}
         });
         layout.addView(skinSpinner, matchWrap());
-        layout.addView(space(8));
-
-        Button importButton = outlineButton("导入自己的透明 PNG / 图片", v -> openCustomSkinPicker());
-        layout.addView(importButton, matchWrap());
         layout.addView(space(12));
 
         TextView sizeLabel = text("桌宠大小", 14, TEXT, true);
@@ -611,6 +583,40 @@ public class MainActivity extends Activity {
         return layout;
     }
 
+    private View buildMusicCard() {
+        SharedPreferences prefs = getSharedPreferences("pet_settings", MODE_PRIVATE);
+        LinearLayout layout = card();
+        layout.addView(text("VINYL COMPANION · 黑胶伴听", 16, TEXT, true));
+        layout.addView(space(5));
+        layout.addView(text("音乐开始时，桌宠会召唤黑胶唱机并随节奏摇摆；暂停、切歌和停止都有独立动作。",
+                13, TEXT_MUTED, false));
+        layout.addView(space(10));
+
+        CheckBox enabled = new CheckBox(this);
+        enabled.setText("播放音乐时自动进入伴听场景");
+        enabled.setTextColor(TEXT);
+        enabled.setButtonTintList(new ColorStateList(
+                new int[][]{new int[]{android.R.attr.state_checked}, new int[]{}},
+                new int[]{CYAN, TEXT_MUTED}));
+        enabled.setChecked(prefs.getBoolean("music_companion_enabled", true));
+        enabled.setOnCheckedChangeListener((buttonView, checked) -> {
+            prefs.edit().putBoolean("music_companion_enabled", checked).apply();
+            if (checked) MusicNotificationListener.syncCurrentState(this);
+            else PetOverlayService.setMusicPlayback(false, false, "", "");
+        });
+        layout.addView(enabled);
+
+        musicPermissionStatus = text("正在检查音乐识别权限…", 12, TEXT_MUTED, false);
+        musicPermissionStatus.setPadding(0, dp(6), 0, dp(10));
+        layout.addView(musicPermissionStatus);
+        layout.addView(outlineButton("开启音乐识别权限", v -> openMusicAccessSettings()), matchWrap());
+        layout.addView(space(7));
+        layout.addView(text("权限只用于读取系统媒体会话的播放状态和歌曲信息；不保存其他通知内容。",
+                11, TEXT_MUTED, false));
+        updateMusicPermissionStatus();
+        return layout;
+    }
+
     private View buildVoiceCard() {
         SharedPreferences prefs = getSharedPreferences("pet_settings", MODE_PRIVATE);
         LinearLayout layout = card();
@@ -619,7 +625,7 @@ public class MainActivity extends Activity {
         layout.addView(text("示例：你好费雾，提醒我明天下午三点交水费\n" +
                         "示例：你好费雾，记一下周末买猫粮\n" +
                         "示例：你好费雾，今天有什么待办\n" +
-                        "也可以问时间、问它会做什么，或换一种自然说法。",
+                        "回复结束后的 12 秒内可直接追问，不用重复唤醒；说“谢谢”或“结束对话”即可退出。",
                 13, TEXT_MUTED, false));
         layout.addView(space(12));
         voiceToggleButton = primaryButton("开启持续语音唤醒", v -> toggleVoiceControl());
@@ -627,8 +633,8 @@ public class MainActivity extends Activity {
         layout.addView(space(10));
         layout.addView(text("回复音色", 14, TEXT, true));
         Spinner voiceStyle = new Spinner(this);
-        String[] styleLabels = {"自然（自动选择高质量中文声线）", "温柔舒缓", "活泼明亮",
-                "纯离线", "跟随系统默认"};
+        String[] styleLabels = {"自然（高质量中文声线）", "温柔舒缓（慢速低音）",
+                "活泼明亮（快速高音）", "纯离线（无需网络）", "跟随系统默认"};
         String[] styleValues = {"natural", "gentle", "bright", "offline", "system"};
         voiceStyle.setAdapter(darkSpinnerAdapter(styleLabels));
         voiceStyle.setBackground(fieldSurface());
@@ -711,26 +717,10 @@ public class MainActivity extends Activity {
 
     private void showSkinPreview(int selected) {
         if (skinPreview == null || skinDescription == null) return;
-        SharedPreferences prefs = getSharedPreferences("pet_settings", MODE_PRIVATE);
-        if (selected == -1) {
-            String value = prefs.getString("custom_skin_uri", "");
-            if (!value.isEmpty()) skinPreview.setImageURI(Uri.parse(value));
-            skinDescription.setText("当前使用：自定义形象");
-            return;
-        }
         int index = SkinCatalog.safeIndex(selected);
         SkinCatalog.Skin skin = SkinCatalog.BUILT_INS[index];
         skinPreview.setImageResource(skin.resourceId);
         skinDescription.setText(String.format(Locale.CHINA, "%s · %s", skin.name, skin.description));
-    }
-
-    private void openCustomSkinPicker() {
-        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-        intent.addCategory(Intent.CATEGORY_OPENABLE);
-        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION |
-                Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
-        intent.setType("image/*");
-        startActivityForResult(intent, REQUEST_CUSTOM_SKIN);
     }
 
     private void refreshRunningPet() {
@@ -979,10 +969,13 @@ public class MainActivity extends Activity {
                 checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED;
         boolean microphone = checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
                 PackageManager.PERMISSION_GRANTED;
-        permissionStatus.setText(String.format(Locale.CHINA, "悬浮窗：%s　通知：%s　麦克风：%s%s",
+        boolean music = isMusicAccessGranted();
+        permissionStatus.setText(String.format(Locale.CHINA,
+                "悬浮窗：%s　通知：%s　麦克风：%s\n音乐识别：%s%s",
                 overlay ? "已允许" : "未允许",
                 notifications ? "已允许" : "未允许",
                 microphone ? "已允许" : "未允许",
+                music ? "已允许" : "未允许",
                 isXiaomi() ? "\n已识别为红米/小米设备，将提供专用后台设置入口。" : ""));
         if (overlay) petToggleButton.setText("开启 / 重新显示桌宠");
     }
@@ -1004,6 +997,56 @@ public class MainActivity extends Activity {
             }
         }
         toast("精确提醒已经可以使用");
+    }
+
+    private boolean isMusicAccessGranted() {
+        ComponentName component = new ComponentName(this, MusicNotificationListener.class);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+            return manager != null && manager.isNotificationListenerAccessGranted(component);
+        }
+        String enabled = Settings.Secure.getString(
+                getContentResolver(), "enabled_notification_listeners");
+        return enabled != null && enabled.contains(component.flattenToString());
+    }
+
+    private void updateMusicPermissionStatus() {
+        if (musicPermissionStatus == null) return;
+        boolean granted = isMusicAccessGranted();
+        musicPermissionStatus.setText(granted
+                ? "● 音乐识别已连接，播放歌曲即可触发黑胶场景"
+                : "○ 尚未授权，需要在系统页面允许“费雾音乐陪伴”");
+        musicPermissionStatus.setTextColor(granted ? SIGNAL : TEXT_MUTED);
+    }
+
+    private void openMusicAccessSettings() {
+        ComponentName component = new ComponentName(this, MusicNotificationListener.class);
+        try {
+            Intent intent;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                intent = new Intent(Settings.ACTION_NOTIFICATION_LISTENER_DETAIL_SETTINGS)
+                        .putExtra(Settings.EXTRA_NOTIFICATION_LISTENER_COMPONENT_NAME,
+                                component.flattenToString());
+            } else {
+                intent = new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS);
+            }
+            startActivity(intent);
+        } catch (RuntimeException ignored) {
+            startActivity(new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS));
+        }
+    }
+
+    private void migrateToOfficialSkins() {
+        SharedPreferences prefs = getSharedPreferences("pet_settings", MODE_PRIVATE);
+        String customUri = prefs.getString("custom_skin_uri", "");
+        if (!customUri.isEmpty()) {
+            try {
+                getContentResolver().releasePersistableUriPermission(
+                        Uri.parse(customUri), Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            } catch (RuntimeException ignored) {}
+        }
+        int selected = SkinCatalog.safeIndex(prefs.getInt("selected_skin", 1));
+        prefs.edit().remove("custom_skin_uri").putInt("selected_skin", selected).apply();
     }
 
     private void openVendorSettings() {

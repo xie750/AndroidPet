@@ -16,6 +16,7 @@ import android.view.Gravity;
 import android.view.WindowManager;
 
 import com.example.desktoppet.R;
+import com.example.desktoppet.feature.music.MusicNotificationListener;
 import com.example.desktoppet.ui.MainActivity;
 
 public class PetOverlayService extends Service {
@@ -27,6 +28,7 @@ public class PetOverlayService extends Service {
     private WindowManager windowManager;
     private WindowManager.LayoutParams params;
     private PetView petView;
+    private boolean musicLayout;
     private static volatile PetOverlayService runningInstance;
 
     @Override
@@ -72,9 +74,7 @@ public class PetOverlayService extends Service {
     private void showPet() {
         windowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
         if (windowManager == null) return;
-        int percent = getSharedPreferences("pet_settings", MODE_PRIVATE)
-                .getInt("pet_size_percent", 100);
-        int size = dp(190) * percent / 100;
+        int size = scaledDp(190);
         params = new WindowManager.LayoutParams(
                 size,
                 size,
@@ -86,17 +86,19 @@ public class PetOverlayService extends Service {
         params.x = getResources().getDisplayMetrics().widthPixels - size;
         params.y = Math.round(getResources().getDisplayMetrics().heightPixels * 0.58f);
         petView = new PetView(this, (dx, dy) -> {
-            if (petView == null) return;
+            if (petView == null) return 0;
             int screenW = getResources().getDisplayMetrics().widthPixels;
             int screenH = getResources().getDisplayMetrics().heightPixels;
-            int currentSize = params.width;
-            params.x = Math.max(-currentSize / 3,
-                    Math.min(screenW - currentSize * 2 / 3, params.x + dx));
-            params.y = Math.max(0, Math.min(screenH - currentSize / 2, params.y + dy));
+            int targetX = params.x + dx, targetY = params.y + dy;
+            params.x = Math.max(-params.width / 3,
+                    Math.min(screenW - params.width * 2 / 3, targetX));
+            params.y = Math.max(0, Math.min(screenH - params.height / 2, targetY));
             try { windowManager.updateViewLayout(petView, params); } catch (RuntimeException ignored) {}
-        });
+            return (params.x != targetX ? PetView.WALL_X : 0) | (params.y != targetY ? PetView.WALL_Y : 0);
+        }, this::setMusicLayout);
         try {
             windowManager.addView(petView, params);
+            MusicNotificationListener.syncCurrentState(this);
         } catch (RuntimeException exception) {
             stopSelf();
         }
@@ -104,13 +106,32 @@ public class PetOverlayService extends Service {
 
     private void refreshSkinAndSize() {
         if (petView == null || params == null || windowManager == null) return;
-        int percent = getSharedPreferences("pet_settings", MODE_PRIVATE)
-                .getInt("pet_size_percent", 100);
-        int size = dp(190) * percent / 100;
-        params.width = size;
-        params.height = size;
+        resizeWindow(musicLayout);
         petView.reloadSkin();
         try { windowManager.updateViewLayout(petView, params); } catch (RuntimeException ignored) {}
+    }
+
+    private void setMusicLayout(boolean enabled) {
+        if (musicLayout == enabled || petView == null || params == null || windowManager == null) return;
+        musicLayout = enabled;
+        resizeWindow(enabled);
+        try { windowManager.updateViewLayout(petView, params); } catch (RuntimeException ignored) {}
+    }
+
+    private void resizeWindow(boolean expanded) {
+        int oldWidth = params.width;
+        int oldHeight = params.height;
+        int right = params.x + oldWidth;
+        int bottom = params.y + oldHeight;
+        int screenW = getResources().getDisplayMetrics().widthPixels;
+        int screenH = getResources().getDisplayMetrics().heightPixels;
+        params.width = expanded ? Math.min(screenW, scaledDp(330)) : scaledDp(190);
+        params.height = scaledDp(expanded ? 220 : 190);
+        params.x = right - params.width;
+        params.y = bottom - params.height;
+        params.x = Math.max(-params.width / 3,
+                Math.min(screenW - params.width * 2 / 3, params.x));
+        params.y = Math.max(0, Math.min(screenH - params.height / 2, params.y));
     }
 
     public static void showReminderIfRunning(String message) {
@@ -131,6 +152,15 @@ public class PetOverlayService extends Service {
         PetOverlayService service = runningInstance;
         if (service != null && service.petView != null) {
             service.petView.post(() -> service.petView.setSpeaking(speaking));
+        }
+    }
+
+    public static void setMusicPlayback(boolean playing, boolean paused,
+                                        String title, String artist) {
+        PetOverlayService service = runningInstance;
+        if (service != null && service.petView != null) {
+            service.petView.post(() -> service.petView.setMusicPlayback(
+                    playing, paused, title, artist));
         }
     }
 
@@ -168,5 +198,11 @@ public class PetOverlayService extends Service {
 
     private int dp(int value) {
         return Math.round(value * getResources().getDisplayMetrics().density);
+    }
+
+    private int scaledDp(int value) {
+        int percent = getSharedPreferences("pet_settings", MODE_PRIVATE)
+                .getInt("pet_size_percent", 100);
+        return dp(value) * percent / 100;
     }
 }

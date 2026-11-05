@@ -8,10 +8,11 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.LinearGradient;
 import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.RectF;
-import android.net.Uri;
+import android.graphics.Shader;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.HapticFeedbackConstants;
@@ -21,13 +22,17 @@ import android.view.View;
 import com.example.desktoppet.R;
 import com.example.desktoppet.ui.MainActivity;
 
-import java.io.InputStream;
 import java.util.Random;
 
 @SuppressLint("ViewConstructor")
 public final class PetView extends View {
+    static final int WALL_X = 1, WALL_Y = 2;
     interface DragListener {
-        void moveBy(int dx, int dy);
+        int moveBy(int dx, int dy);
+    }
+
+    interface MusicSceneListener {
+        void onVisibilityChanged(boolean visible);
     }
 
     public enum Action {
@@ -42,6 +47,7 @@ public final class PetView extends View {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Random random = new Random();
     private final DragListener dragListener;
+    private final MusicSceneListener musicSceneListener;
     private Bitmap skinBitmap;
     private Bitmap pettedBitmap;
     private Bitmap pokedBitmap;
@@ -59,8 +65,14 @@ public final class PetView extends View {
     private boolean stroked;
     private boolean longPressed;
     private boolean speaking;
-    private float lastDragDx;
-    private float lastDragDy;
+    private final PetRig rig = new PetRig();
+    private final android.graphics.Matrix pose = new android.graphics.Matrix();
+    private final android.graphics.Matrix inversePose = new android.graphics.Matrix();
+    private final float[] hitPoint = new float[2];
+    private float carryX, carryY;
+    private long nextBlink, blinkStart = -1000;
+    private float blink;
+    private boolean touching;
     private float touchNormalizedX = .5f;
     private float touchNormalizedY = .5f;
     private long downAt;
@@ -71,10 +83,18 @@ public final class PetView extends View {
     private Action action = Action.IDLE;
     private long actionStarted;
     private long actionUntil;
+    private boolean musicSceneVisible;
+    private boolean musicPlaying;
+    private boolean musicPaused;
+    private long musicSceneStarted;
+    private long musicExitAt = Long.MAX_VALUE;
+    private String musicTitle = "";
+    private String musicArtist = "";
 
-    PetView(Context context, DragListener dragListener) {
+    PetView(Context context, DragListener dragListener, MusicSceneListener musicSceneListener) {
         super(context);
         this.dragListener = dragListener;
+        this.musicSceneListener = musicSceneListener;
         setLayerType(View.LAYER_TYPE_HARDWARE, null);
         setContentDescription("费雾桌宠，点击互动，长按打开待办");
         reloadSkin();
@@ -94,6 +114,45 @@ public final class PetView extends View {
         lastInteractionAt = System.currentTimeMillis();
         if (value && action == Action.SLEEP) setAction(Action.OBSERVE, 900L);
         if (!value && action == Action.IDLE) nextAutonomousAt = lastInteractionAt + 7000L;
+        invalidate();
+    }
+
+    void setMusicPlayback(boolean playing, boolean paused, String title, String artist) {
+        long now = System.currentTimeMillis();
+        String nextTitle = title == null ? "" : title.trim();
+        String nextArtist = artist == null ? "" : artist.trim();
+        boolean trackChanged = !nextTitle.isEmpty() && !nextTitle.equals(musicTitle);
+        musicTitle = nextTitle;
+        musicArtist = nextArtist;
+
+        if (playing) {
+            if (!musicSceneVisible) {
+                musicSceneVisible = true;
+                musicSceneStarted = now;
+                musicSceneListener.onVisibilityChanged(true);
+            }
+            musicPlaying = true;
+            musicPaused = false;
+            musicExitAt = Long.MAX_VALUE;
+            if (trackChanged || now - musicSceneStarted < 250L) {
+                String track = musicTitle;
+                if (!musicArtist.isEmpty()) track += " · " + musicArtist;
+                message = track.isEmpty() ? "黑胶伴听模式启动" : "♪ " + track;
+                messageUntil = now + 3800L;
+            }
+            if (action == Action.SLEEP) action = Action.IDLE;
+            lastInteractionAt = now;
+        } else if (paused && musicSceneVisible) {
+            musicPlaying = false;
+            musicPaused = true;
+            musicExitAt = now + 18_000L;
+            message = "唱针抬起，等你回来";
+            messageUntil = now + 3200L;
+        } else if (musicSceneVisible) {
+            musicPlaying = false;
+            musicPaused = false;
+            musicExitAt = Math.min(musicExitAt, now + 1800L);
+        }
         invalidate();
     }
 
@@ -129,6 +188,13 @@ public final class PetView extends View {
     protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
         long now = System.currentTimeMillis();
+        if (musicSceneVisible && now >= musicExitAt) {
+            musicSceneVisible = false;
+            musicPlaying = false;
+            musicPaused = false;
+            musicExitAt = Long.MAX_VALUE;
+            musicSceneListener.onVisibilityChanged(false);
+        }
         if (now > actionUntil && action != Action.DRAG && action != Action.SLEEP) {
             action = Action.IDLE;
         }
@@ -137,12 +203,31 @@ public final class PetView extends View {
         float width = getWidth();
         float height = getHeight();
         double phase = (now % 2600L) / 2600.0 * Math.PI * 2.0;
-        float bob = (float) Math.sin(phase) * 1.6f * density;
-        float rotation = (float) Math.sin(phase) * .7f;
+        long tick = android.os.SystemClock.uptimeMillis();
+        if (tick >= nextBlink) {
+            blinkStart = tick;
+            nextBlink = tick + 2200L + random.nextInt(3600);
+        }
+        blink = (float)Math.sin(Math.PI * Math.min(1f, (tick - blinkStart) / 170f));
+        float attention = action == Action.OBSERVE || action == Action.PET ?
+                (touchNormalizedX - .5f) * 2f : 0;
+        float dt = rig.advance(tick, action == Action.DRAG, attention,
+                action == Action.PET || action == Action.POKE ? 1f : 0);
+        advanceCoast(dt, density);
+        float bob = 0f;
+        float rotation = 0f;
         float scaleX = 1f;
         float scaleY = 1f;
         float offsetX = 0f;
         float offsetY = 0f;
+
+        if (musicSceneVisible) {
+            float stageAlpha = Math.min(1f, (now - musicSceneStarted) / 650f);
+            if (musicExitAt != Long.MAX_VALUE && musicExitAt - now < 1200L) {
+                stageAlpha *= Math.max(0f, (musicExitAt - now) / 1200f);
+            }
+            drawMusicStage(canvas, width, height, density, now, stageAlpha);
+        }
 
         float progress = actionUntil > actionStarted
                 ? Math.min(1f, Math.max(0f, (now - actionStarted) / (float) (actionUntil - actionStarted)))
@@ -171,18 +256,8 @@ public final class PetView extends View {
                 rotation = (touchNormalizedX < .5f ? 1f : -1f) * poke * 7f;
                 break;
             case DRAG:
-                rotation = Math.max(-14f, Math.min(14f, lastDragDx * .7f));
-                scaleX = .94f;
-                scaleY = 1.06f;
-                offsetX = Math.max(-4f * density, Math.min(4f * density, lastDragDx * .18f));
-                offsetY = -3f * density;
-                break;
             case LAND:
-                float landingWave = (float) (Math.sin(progress * Math.PI * 3f) * (1f - progress));
-                float compression = Math.max(0f, landingWave);
-                scaleX = 1f + compression * .16f;
-                scaleY = 1f - compression * .20f;
-                offsetY = Math.abs(landingWave) * 4f * density;
+                // The mesh keeps its position and angular momentum across release.
                 break;
             case LISTEN:
                 scaleX = scaleY = 1f + (float) Math.sin(phase * 2) * .035f;
@@ -216,23 +291,51 @@ public final class PetView extends View {
             rotation += syllable * .65f;
         }
 
+        if (musicPlaying && action != Action.DRAG && action != Action.POKE && action != Action.PET) {
+            double beat = (now % 720L) / 720.0 * Math.PI * 2.0;
+            rotation += (float) Math.sin(beat) * 4.6f;
+            bob += (float) Math.abs(Math.sin(beat)) * -2.6f * density;
+            scaleY *= 1f - (float) Math.sin(beat) * .016f;
+        }
+
         if (now < messageUntil || messageUntil == Long.MAX_VALUE) {
             drawBubble(canvas, message, width, density);
         }
 
-        float top = 58f * density;
-        float bottom = height - 2f * density;
-        float left = 7f * density;
+        float top = musicSceneVisible ? height * .24f : 58f * density;
+        float bottom = height - (musicSceneVisible ? 9f : 2f) * density;
+        float left = musicSceneVisible ? width * .48f : 7f * density;
         float right = width - 7f * density;
+        float pivotX = (left + right) / 2f;
         canvas.save();
-        canvas.translate(width / 2f + offsetX, (top + bottom) / 2f + bob + offsetY);
-        canvas.rotate(rotation);
-        canvas.scale(scaleX, scaleY);
-        canvas.translate(-width / 2f, -(top + bottom) / 2f);
+        float pivotY = (top + bottom) / 2f;
+        pose.setScale(1f + (scaleX - 1f) * .5f, 1f + (scaleY - 1f) * .5f, pivotX, pivotY);
+        pose.postRotate(rotation * .55f, pivotX, pivotY);
+        pose.postTranslate(offsetX, bob + offsetY);
+        canvas.concat(pose);
+        pose.invert(inversePose);
         drawSkin(canvas, left, top, right, bottom);
         canvas.restore();
 
-        postInvalidateDelayed(50L);
+        if (touching || speaking || musicSceneVisible || (action != Action.IDLE && action != Action.SLEEP)
+                || tick - blinkStart < 200L) postInvalidateOnAnimation();
+        else postInvalidateDelayed(action == Action.SLEEP ? 100L : 40L);
+    }
+
+    private void advanceCoast(float dt, float density) {
+        if (Math.abs(rig.coastX) + Math.abs(rig.coastY) < 4f) return;
+        float decay = (float)Math.exp(-dt * 8f);
+        carryX += rig.coastX * density * (1f - decay) / 8f;
+        carryY += rig.coastY * density * (1f - decay) / 8f;
+        rig.coastX *= decay;
+        rig.coastY *= decay;
+        int dx = Math.round(carryX), dy = Math.round(carryY);
+        carryX -= dx;
+        carryY -= dy;
+        if (dx == 0 && dy == 0) return;
+        int walls = dragListener.moveBy(dx, dy);
+        if ((walls & WALL_X) != 0) rig.bumpX();
+        if ((walls & WALL_Y) != 0) rig.bumpY();
     }
 
     private void drawSkin(Canvas canvas, float left, float top, float right, float bottom) {
@@ -260,24 +363,146 @@ public final class PetView extends View {
         float ratio = Math.min(maxWidth / bitmap.getWidth(), maxHeight / bitmap.getHeight());
         float drawWidth = bitmap.getWidth() * ratio;
         float drawHeight = bitmap.getHeight() * ratio;
-        float x = (getWidth() - drawWidth) / 2f;
+        float x = left + (maxWidth - drawWidth) / 2f;
         float y = bottom - drawHeight;
         RectF targetRect = updateHitRect ? imageRect : new RectF();
         targetRect.set(x, y, x + drawWidth, y + drawHeight);
         imagePaint.setFilterBitmap(selectedSkin != 2);
         imagePaint.setAlpha(alpha);
-        canvas.drawBitmap(bitmap, null, targetRect, imagePaint);
+        rig.draw(canvas, bitmap, targetRect, imagePaint, selectedSkin,
+                bitmap == sleepingBitmap, speaking, android.os.SystemClock.uptimeMillis(),
+                bitmap == skinBitmap ? blink : 0);
         imagePaint.setAlpha(255);
     }
 
     private Bitmap targetBitmap() {
         if (selectedSkin != 1) return skinBitmap;
         if (speaking && talkingBitmap != null) return talkingBitmap;
+        if (musicSceneVisible && pettedBitmap != null) return pettedBitmap;
         switch (action) {
             case PET: return pettedBitmap != null ? pettedBitmap : skinBitmap;
             case POKE: return pokedBitmap != null ? pokedBitmap : skinBitmap;
             case SLEEP: return sleepingBitmap != null ? sleepingBitmap : skinBitmap;
             default: return skinBitmap;
+        }
+    }
+
+    private void drawMusicStage(Canvas canvas, float width, float height, float density,
+                                long now, float alpha) {
+        density = Math.min(density, Math.min(width / 330f, height / 220f));
+        int stageAlpha = Math.round(238f * alpha);
+        float panelLeft = 4f * density;
+        float panelTop = 53f * density;
+        float panelRight = width - 4f * density;
+        float panelBottom = height - 3f * density;
+        RectF panel = new RectF(panelLeft, panelTop, panelRight, panelBottom);
+        paint.setShader(new LinearGradient(panelLeft, panelTop, panelRight, panelBottom,
+                new int[]{Color.argb(stageAlpha, 8, 10, 27),
+                        Color.argb(stageAlpha, 35, 16, 48),
+                        Color.argb(stageAlpha, 8, 34, 46)},
+                null, Shader.TileMode.CLAMP));
+        paint.setStyle(Paint.Style.FILL);
+        canvas.drawRoundRect(panel, 22f * density, 22f * density, paint);
+        paint.setShader(null);
+
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeWidth(1.3f * density);
+        paint.setColor(Color.argb(Math.round(150f * alpha), 67, 231, 246));
+        canvas.drawRoundRect(panel, 22f * density, 22f * density, paint);
+        paint.setStyle(Paint.Style.FILL);
+
+        float barsBottom = panelBottom - 8f * density;
+        for (int i = 0; i < 11; i++) {
+            double wave = now / 185.0 + i * .82;
+            float energy = musicPlaying ? (float) Math.abs(Math.sin(wave)) : .12f;
+            float barHeight = (5f + energy * (18f + i % 3 * 5f)) * density;
+            float barLeft = panelLeft + (12f + i * 10f) * density;
+            paint.setColor(Color.argb(Math.round((75f + energy * 105f) * alpha),
+                    i % 2 == 0 ? 54 : 244, i % 2 == 0 ? 220 : 76,
+                    i % 2 == 0 ? 244 : 151));
+            canvas.drawRoundRect(new RectF(barLeft, barsBottom - barHeight,
+                    barLeft + 4f * density, barsBottom), 2f * density, 2f * density, paint);
+        }
+
+        float cx = Math.min(width * .27f, 92f * density);
+        float cy = height * .63f;
+        float radius = Math.min(43f * density, width * .145f);
+        RectF deck = new RectF(cx - radius - 15f * density, cy - radius - 13f * density,
+                cx + radius + 24f * density, cy + radius + 17f * density);
+        paint.setShader(new LinearGradient(deck.left, deck.top, deck.right, deck.bottom,
+                Color.argb(Math.round(245f * alpha), 112, 55, 38),
+                Color.argb(Math.round(245f * alpha), 36, 18, 28), Shader.TileMode.CLAMP));
+        canvas.drawRoundRect(deck, 12f * density, 12f * density, paint);
+        paint.setShader(null);
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeWidth(2f * density);
+        paint.setColor(Color.argb(Math.round(180f * alpha), 255, 171, 79));
+        canvas.drawRoundRect(deck, 12f * density, 12f * density, paint);
+        paint.setStyle(Paint.Style.FILL);
+
+        paint.setColor(Color.argb(Math.round(110f * alpha), 45, 226, 247));
+        canvas.drawCircle(cx, cy + 2f * density, radius + 6f * density, paint);
+        canvas.save();
+        if (musicPlaying) canvas.rotate((now - musicSceneStarted) * .095f, cx, cy);
+        paint.setColor(Color.argb(Math.round(255f * alpha), 8, 8, 13));
+        canvas.drawCircle(cx, cy, radius, paint);
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeWidth(.75f * density);
+        for (int i = 1; i <= 6; i++) {
+            paint.setColor(Color.argb(Math.round((45f + i * 8f) * alpha), 185, 199, 214));
+            canvas.drawCircle(cx, cy, radius * i / 7f, paint);
+        }
+        paint.setStrokeWidth(5f * density);
+        paint.setColor(Color.argb(Math.round(90f * alpha), 90, 224, 244));
+        canvas.drawArc(new RectF(cx - radius * .76f, cy - radius * .76f,
+                cx + radius * .76f, cy + radius * .76f), 205f, 34f, false, paint);
+        paint.setStyle(Paint.Style.FILL);
+        paint.setColor(Color.argb(Math.round(255f * alpha), 239, 88, 125));
+        canvas.drawCircle(cx, cy, radius * .25f, paint);
+        paint.setColor(Color.argb(Math.round(255f * alpha), 255, 205, 92));
+        canvas.drawCircle(cx, cy, radius * .075f, paint);
+        paint.setStrokeWidth(2f * density);
+        paint.setColor(Color.argb(Math.round(225f * alpha), 255, 225, 175));
+        canvas.drawRect(cx - radius * .05f, cy - radius * .23f,
+                cx + radius * .05f, cy + radius * .23f, paint);
+        canvas.restore();
+
+        float armX = cx + radius + 13f * density;
+        float armY = cy - radius + 5f * density;
+        float needleX = musicPlaying ? cx + radius * .48f : cx + radius * .84f;
+        float needleY = musicPlaying ? cy - radius * .28f : cy - radius * .70f;
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeCap(Paint.Cap.ROUND);
+        paint.setStrokeWidth(4f * density);
+        paint.setColor(Color.argb(Math.round(235f * alpha), 220, 224, 229));
+        canvas.drawLine(armX, armY, needleX, needleY, paint);
+        paint.setStyle(Paint.Style.FILL);
+        paint.setColor(Color.argb(Math.round(255f * alpha), 250, 188, 78));
+        canvas.drawCircle(armX, armY, 6f * density, paint);
+        paint.setStrokeCap(Paint.Cap.BUTT);
+
+        for (int i = 0; i < 5; i++) {
+            double notePhase = (now / 760.0) + i * 1.37;
+            float noteX = cx - radius + (i * 23f % 86f) * density;
+            float noteY = panelTop + (24f + (float) Math.sin(notePhase) * 11f) * density;
+            paint.setTextSize((16f + i % 2 * 5f) * density);
+            paint.setTextAlign(Paint.Align.CENTER);
+            int noteAlpha = Math.round((musicPlaying ? 185f : 65f) * alpha);
+            paint.setColor(Color.argb(noteAlpha, i % 2 == 0 ? 69 : 255,
+                    i % 2 == 0 ? 229 : 107, i % 2 == 0 ? 244 : 170));
+            canvas.drawText(i % 2 == 0 ? "♪" : "♫", noteX, noteY, paint);
+        }
+
+        String label = musicPaused ? "PAUSED" : "VINYL MODE";
+        paint.setTextAlign(Paint.Align.CENTER);
+        paint.setTextSize(8.5f * density);
+        paint.setColor(Color.argb(Math.round(210f * alpha), 194, 242, 248));
+        canvas.drawText(label, cx, panelBottom - 10f * density, paint);
+        if (!musicTitle.isEmpty()) {
+            String title = musicTitle.length() > 11 ? musicTitle.substring(0, 10) + "…" : musicTitle;
+            paint.setTextSize(9.5f * density);
+            paint.setColor(Color.argb(Math.round(235f * alpha), 255, 219, 149));
+            canvas.drawText(title, cx, panelTop + 16f * density, paint);
         }
     }
 
@@ -325,22 +550,12 @@ public final class PetView extends View {
 
     private Bitmap loadSelectedSkin() {
         SharedPreferences prefs = getContext().getSharedPreferences("pet_settings", Context.MODE_PRIVATE);
-        selectedSkin = prefs.getInt("selected_skin", 1);
+        selectedSkin = SkinCatalog.safeIndex(prefs.getInt("selected_skin", 1));
         BitmapFactory.Options options = new BitmapFactory.Options();
         options.inSampleSize = 2;
         options.inPreferredConfig = Bitmap.Config.ARGB_8888;
-        if (selectedSkin == -1) {
-            String uriValue = prefs.getString("custom_skin_uri", "");
-            if (!uriValue.isEmpty()) {
-                try (InputStream stream = getContext().getContentResolver().openInputStream(Uri.parse(uriValue))) {
-                    Bitmap custom = BitmapFactory.decodeStream(stream, null, options);
-                    if (custom != null) return custom;
-                } catch (Exception ignored) {}
-            }
-            selectedSkin = 1;
-        }
-        int index = SkinCatalog.safeIndex(selectedSkin);
-        return BitmapFactory.decodeResource(getResources(), SkinCatalog.BUILT_INS[index].resourceId, options);
+        return BitmapFactory.decodeResource(
+                getResources(), SkinCatalog.BUILT_INS[selectedSkin].resourceId, options);
     }
 
     private void loadMistExpressions() {
@@ -363,6 +578,7 @@ public final class PetView extends View {
     }
 
     private void updateAutonomousBehavior(long now) {
+        if (musicSceneVisible) return;
         if (speaking || action == Action.DRAG || action == Action.SLEEP) return;
         if (action == Action.IDLE && now - lastInteractionAt > 38_000L) {
             messageUntil = 0L;
@@ -371,7 +587,9 @@ public final class PetView extends View {
         }
         if (action == Action.IDLE && now >= nextAutonomousAt) {
             touchNormalizedX = random.nextBoolean() ? .25f : .75f;
+            long lastUserInteraction = lastInteractionAt;
             setAction(Action.OBSERVE, 1800L + random.nextInt(900));
+            lastInteractionAt = lastUserInteraction;
             nextAutonomousAt = now + 9000L + random.nextInt(9000);
         }
     }
@@ -380,15 +598,24 @@ public final class PetView extends View {
     public boolean onTouchEvent(MotionEvent event) {
         switch (event.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:
+                hitPoint[0] = event.getX();
+                hitPoint[1] = event.getY();
+                inversePose.mapPoints(hitPoint);
+                if (renderedBitmap == null || !rig.texturePoint(hitPoint[0], hitPoint[1], hitPoint)) return false;
+                touchNormalizedX = hitPoint[0];
+                touchNormalizedY = hitPoint[1];
+                int px = Math.min(renderedBitmap.getWidth()-1, (int)(touchNormalizedX * renderedBitmap.getWidth()));
+                int py = Math.min(renderedBitmap.getHeight()-1, (int)(touchNormalizedY * renderedBitmap.getHeight()));
+                if (Color.alpha(renderedBitmap.getPixel(px, py)) < 20) return false;
+                touching = true;
+                carryX = carryY = 0;
+                rig.grab(touchNormalizedX, touchNormalizedY, event.getEventTime());
                 downRawX = lastRawX = event.getRawX();
                 downRawY = lastRawY = event.getRawY();
                 downAt = event.getEventTime();
                 moved = false;
                 stroked = false;
                 longPressed = false;
-                lastDragDx = lastDragDy = 0f;
-                touchNormalizedX = getWidth() == 0 ? .5f : event.getX() / getWidth();
-                touchNormalizedY = getHeight() == 0 ? .5f : event.getY() / getHeight();
                 lastInteractionAt = System.currentTimeMillis();
                 nextAutonomousAt = lastInteractionAt + 9000L + random.nextInt(7000);
                 if (action == Action.SLEEP) {
@@ -405,7 +632,9 @@ public final class PetView extends View {
                 float totalDy = event.getRawY() - downRawY;
                 float distance = (float) Math.hypot(totalDx, totalDy);
                 float density = getResources().getDisplayMetrics().density;
-                if (distance > 22f * density) {
+                rig.sample(dx / density, dy / density, event.getEventTime());
+                if (moved || distance > (stroked ? 22f : 13f) * density) {
+                    if (!moved) { dx = totalDx; dy = totalDy; }
                     moved = true;
                     stroked = false;
                     action = Action.DRAG;
@@ -419,14 +648,20 @@ public final class PetView extends View {
                     actionUntil = actionStarted + 1600L;
                     handler.removeCallbacks(longPressRunnable);
                 }
-                lastDragDx = dx;
-                lastDragDy = dy;
+                postInvalidateOnAnimation();
                 lastRawX = event.getRawX();
                 lastRawY = event.getRawY();
                 return true;
             case MotionEvent.ACTION_UP:
             case MotionEvent.ACTION_CANCEL:
                 handler.removeCallbacks(longPressRunnable);
+                touching = false;
+                boolean canceled = event.getActionMasked() == MotionEvent.ACTION_CANCEL;
+                rig.release(event.getEventTime(), moved && !canceled);
+                if (canceled) {
+                    setAction(Action.IDLE, 0);
+                    return true;
+                }
                 lastInteractionAt = System.currentTimeMillis();
                 if (moved) {
                     setAction(Action.LAND, 760L);
