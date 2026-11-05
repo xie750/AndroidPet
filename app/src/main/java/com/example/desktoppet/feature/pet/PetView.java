@@ -429,13 +429,25 @@ public final class PetView extends View {
                 cx + radius * .92f, cy + ry + edgeDepth * 1.8f);
         canvas.drawOval(musicOval, paint);
 
-        musicOval.set(cx - radius, cy - ry + edgeDepth,
-                cx + radius, cy + ry + edgeDepth);
-        paint.setShader(new LinearGradient(cx, cy - ry, cx, cy + ry + edgeDepth,
-                Color.argb(Math.round(255f * alpha), 43, 48, 53),
-                Color.argb(Math.round(255f * alpha), 3, 5, 8), Shader.TileMode.CLAMP));
-        canvas.drawOval(musicOval, paint);
+        for (int layer = 4; layer >= 1; layer--) {
+            float offset = edgeDepth * layer / 4f;
+            musicOval.set(cx - radius, cy - ry + offset,
+                    cx + radius, cy + ry + offset);
+            int lift = 7 + layer * 5;
+            paint.setShader(new LinearGradient(cx, cy - ry + offset,
+                    cx, cy + ry + offset,
+                    Color.argb(Math.round(255f * alpha), 34 + lift, 39 + lift, 43 + lift),
+                    Color.argb(Math.round(255f * alpha), 2, 4, 7), Shader.TileMode.CLAMP));
+            canvas.drawOval(musicOval, paint);
+        }
         paint.setShader(null);
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeWidth(1.15f * density);
+        paint.setColor(Color.argb(Math.round(165f * alpha), 91, 111, 119));
+        musicOval.set(cx - radius, cy - ry + edgeDepth * .72f,
+                cx + radius, cy + ry + edgeDepth * .72f);
+        canvas.drawArc(musicOval, 8f, 164f, false, paint);
+        paint.setStyle(Paint.Style.FILL);
 
         canvas.save();
         canvas.translate(cx, cy);
@@ -464,9 +476,19 @@ public final class PetView extends View {
                 198f, 58f, false, paint);
         paint.setStyle(Paint.Style.FILL);
 
+        buildTerrainPath(musicPath, terrainRadius);
+        double recordRotation = Math.toRadians(musicDiscAngle);
+        float soilDepth = 5.5f * density;
+        float localDepth = soilDepth / flatten;
         canvas.save();
-        musicPath.reset();
-        musicPath.addCircle(0f, 0f, terrainRadius, Path.Direction.CW);
+        canvas.translate((float) Math.sin(recordRotation) * localDepth,
+                (float) Math.cos(recordRotation) * localDepth);
+        paint.setColor(Color.argb(Math.round(255f * alpha), 43, 72, 38));
+        canvas.drawPath(musicPath, paint);
+        canvas.restore();
+
+        canvas.save();
+        buildTerrainPath(musicPath, terrainRadius);
         canvas.clipPath(musicPath);
 
         paint.setShader(new LinearGradient(-terrainRadius, -terrainRadius,
@@ -503,7 +525,9 @@ public final class PetView extends View {
         paint.setStyle(Paint.Style.STROKE);
         paint.setStrokeWidth(1.5f * density);
         paint.setColor(Color.argb(Math.round(210f * alpha), 221, 231, 220));
-        canvas.drawCircle(0f, 0f, terrainRadius, paint);
+        buildTerrainPath(musicPath, terrainRadius);
+        canvas.drawPath(musicPath, paint);
+        drawTerrainFringe(canvas, terrainRadius, density, alpha);
         paint.setStrokeWidth(1.1f * density);
         paint.setColor(Color.argb(Math.round(165f * alpha), 188, 207, 214));
         canvas.drawCircle(0f, 0f, radius - 1.2f * density, paint);
@@ -532,6 +556,44 @@ public final class PetView extends View {
     private float easeOut(float value) {
         float inverse = 1f - value;
         return 1f - inverse * inverse * inverse;
+    }
+
+    private void buildTerrainPath(Path path, float radius) {
+        path.reset();
+        for (int i = 0; i <= 56; i++) {
+            double angle = i * Math.PI * 2.0 / 56.0;
+            float wobble = 1f + (float) Math.sin(angle * 5.0) * .018f
+                    + (float) Math.sin(angle * 11.0 + .8) * .011f;
+            float x = (float) Math.cos(angle) * radius * wobble;
+            float y = (float) Math.sin(angle) * radius * wobble;
+            if (i == 0) path.moveTo(x, y);
+            else path.lineTo(x, y);
+        }
+        path.close();
+    }
+
+    private void drawTerrainFringe(Canvas canvas, float radius, float density, float alpha) {
+        paint.setStrokeCap(Paint.Cap.ROUND);
+        paint.setStrokeWidth(.95f * density);
+        double rotation = Math.toRadians(musicDiscAngle);
+        for (int i = 0; i < 54; i++) {
+            double angle = i * Math.PI * 2.0 / 54.0;
+            if (Math.sin(angle + rotation) < -.12) continue;
+            float wobble = 1f + (float) Math.sin(angle * 5.0) * .018f
+                    + (float) Math.sin(angle * 11.0 + .8) * .011f;
+            float inner = radius * wobble * .985f;
+            float outer = radius * wobble * (1.018f + i % 4 * .007f);
+            int red = i % 5 == 0 ? 167 : 32;
+            int green = i % 5 == 0 ? 120 : 119 + i % 3 * 17;
+            int blue = i % 5 == 0 ? 42 : 53;
+            paint.setColor(Color.argb(Math.round((160f + i % 4 * 18f) * alpha),
+                    red, green, blue));
+            canvas.drawLine((float) Math.cos(angle) * inner,
+                    (float) Math.sin(angle) * inner,
+                    (float) Math.cos(angle + (i % 3 - 1) * .015) * outer,
+                    (float) Math.sin(angle + (i % 3 - 1) * .015) * outer, paint);
+        }
+        paint.setStrokeCap(Paint.Cap.BUTT);
     }
 
     private void drawSeasonTexture(Canvas canvas, float radius, float density, float alpha) {
@@ -587,46 +649,112 @@ public final class PetView extends View {
 
     private void drawMusicHub(Canvas canvas, float cx, float cy, float radius, float ry,
                               float density, float alpha) {
+        float flatten = ry / radius;
         float pointerAngle = (float) Math.toRadians(-72f + musicDiscAngle * 1.65f);
-        float endX = cx + (float) Math.cos(pointerAngle) * radius * .77f;
-        float endY = cy + (float) Math.sin(pointerAngle) * ry * .96f;
+        float halfShaft = 2.5f * density;
+        float halfHead = 7.2f * density;
 
-        paint.setStyle(Paint.Style.STROKE);
-        paint.setStrokeCap(Paint.Cap.ROUND);
-        paint.setStrokeWidth(2.7f * density);
-        paint.setColor(Color.argb(Math.round(250f * alpha), 238, 184, 50));
-        canvas.drawLine(cx, cy - 1f * density, endX, endY, paint);
-        paint.setStrokeCap(Paint.Cap.BUTT);
-
+        buildProjectedArrow(musicPath, cx, cy, flatten, pointerAngle, radius,
+                halfShaft, halfHead, -1.5f * density);
         paint.setStyle(Paint.Style.FILL);
-        musicPath.reset();
-        float dx = (float) Math.cos(pointerAngle);
-        float dy = (float) Math.sin(pointerAngle);
-        float px = -dy * 4f * density;
-        float py = dx * 4f * density;
-        musicPath.moveTo(endX + dx * 8f * density, endY + dy * 4f * density);
-        musicPath.lineTo(endX + px, endY + py);
-        musicPath.lineTo(endX - px, endY - py);
-        musicPath.close();
-        paint.setColor(Color.argb(Math.round(255f * alpha), 255, 205, 77));
+        paint.setColor(Color.argb(Math.round(82f * alpha), 8, 10, 9));
         canvas.drawPath(musicPath, paint);
 
-        musicOval.set(cx - radius * .095f, cy - ry * .13f + 2f * density,
-                cx + radius * .095f, cy + ry * .13f + 3f * density);
-        paint.setColor(Color.argb(Math.round(115f * alpha), 0, 0, 0));
+        buildProjectedArrow(musicPath, cx, cy, flatten, pointerAngle, radius,
+                halfShaft, halfHead, 4f * density);
+        paint.setColor(Color.argb(Math.round(255f * alpha), 118, 72, 19));
+        canvas.drawPath(musicPath, paint);
+
+        buildProjectedArrow(musicPath, cx, cy, flatten, pointerAngle, radius,
+                halfShaft, halfHead, 9f * density);
+        float arrowEndX = cx + (float) Math.cos(pointerAngle) * radius * .78f;
+        float arrowEndY = projectPlaneY(cy,
+                (float) Math.sin(pointerAngle) * radius * .78f, flatten, 9f * density);
+        paint.setShader(new LinearGradient(cx, cy - 9f * density,
+                arrowEndX, arrowEndY,
+                Color.argb(Math.round(255f * alpha), 255, 232, 132),
+                Color.argb(Math.round(255f * alpha), 219, 146, 35), Shader.TileMode.CLAMP));
+        canvas.drawPath(musicPath, paint);
+        paint.setShader(null);
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeWidth(.75f * density);
+        paint.setColor(Color.argb(Math.round(180f * alpha), 255, 246, 190));
+        canvas.drawPath(musicPath, paint);
+        paint.setStyle(Paint.Style.FILL);
+
+        float hubRx = radius * .094f;
+        float hubRy = Math.max(3.6f * density, hubRx * flatten * .52f);
+        float bodyTop = cy - 11f * density;
+        float bodyBottom = cy + hubRy * .32f;
+        musicOval.set(cx - hubRx * 1.12f, cy - hubRy + 2f * density,
+                cx + hubRx * 1.12f, cy + hubRy + 4f * density);
+        paint.setColor(Color.argb(Math.round(125f * alpha), 0, 0, 0));
         canvas.drawOval(musicOval, paint);
-        musicOval.offset(0f, -2f * density);
+
+        musicOval.set(cx - hubRx, bodyTop, cx + hubRx, bodyBottom);
+        paint.setShader(new LinearGradient(musicOval.left, bodyTop,
+                musicOval.right, bodyBottom,
+                Color.argb(Math.round(255f * alpha), 67, 73, 77),
+                Color.argb(Math.round(255f * alpha), 5, 7, 9), Shader.TileMode.CLAMP));
+        canvas.drawRect(musicOval, paint);
+        musicOval.set(cx - hubRx, bodyBottom - hubRy,
+                cx + hubRx, bodyBottom + hubRy);
+        canvas.drawOval(musicOval, paint);
+
+        musicOval.set(cx - hubRx, bodyTop - hubRy,
+                cx + hubRx, bodyTop + hubRy);
         paint.setShader(new LinearGradient(musicOval.left, musicOval.top,
                 musicOval.right, musicOval.bottom,
-                Color.argb(Math.round(255f * alpha), 49, 50, 51),
-                Color.argb(Math.round(255f * alpha), 6, 7, 8), Shader.TileMode.CLAMP));
+                Color.argb(Math.round(255f * alpha), 84, 93, 98),
+                Color.argb(Math.round(255f * alpha), 10, 13, 15), Shader.TileMode.CLAMP));
         canvas.drawOval(musicOval, paint);
         paint.setShader(null);
         paint.setStyle(Paint.Style.STROKE);
-        paint.setStrokeWidth(.8f * density);
-        paint.setColor(Color.argb(Math.round(145f * alpha), 202, 205, 207));
+        paint.setStrokeWidth(.85f * density);
+        paint.setColor(Color.argb(Math.round(190f * alpha), 193, 205, 208));
         canvas.drawOval(musicOval, paint);
         paint.setStyle(Paint.Style.FILL);
+    }
+
+    private float projectPlaneY(float cy, float localY, float flatten, float height) {
+        return cy + localY * flatten - height;
+    }
+
+    private void buildProjectedArrow(Path path, float cx, float cy, float flatten,
+                                     float angle, float radius, float halfShaft,
+                                     float halfHead, float height) {
+        float ux = (float) Math.cos(angle);
+        float uy = (float) Math.sin(angle);
+        float px = -uy;
+        float py = ux;
+        float start = radius * .055f;
+        float shoulder = radius * .64f;
+        float tip = radius * .79f;
+        path.reset();
+        projectedMove(path, cx, cy, flatten,
+                ux * start + px * halfShaft, uy * start + py * halfShaft, height);
+        projectedLine(path, cx, cy, flatten,
+                ux * shoulder + px * halfShaft, uy * shoulder + py * halfShaft, height);
+        projectedLine(path, cx, cy, flatten,
+                ux * shoulder + px * halfHead, uy * shoulder + py * halfHead, height);
+        projectedLine(path, cx, cy, flatten, ux * tip, uy * tip, height);
+        projectedLine(path, cx, cy, flatten,
+                ux * shoulder - px * halfHead, uy * shoulder - py * halfHead, height);
+        projectedLine(path, cx, cy, flatten,
+                ux * shoulder - px * halfShaft, uy * shoulder - py * halfShaft, height);
+        projectedLine(path, cx, cy, flatten,
+                ux * start - px * halfShaft, uy * start - py * halfShaft, height);
+        path.close();
+    }
+
+    private void projectedMove(Path path, float cx, float cy, float flatten,
+                               float localX, float localY, float height) {
+        path.moveTo(cx + localX, projectPlaneY(cy, localY, flatten, height));
+    }
+
+    private void projectedLine(Path path, float cx, float cy, float flatten,
+                               float localX, float localY, float height) {
+        path.lineTo(cx + localX, projectPlaneY(cy, localY, flatten, height));
     }
 
     private void drawSeasonWeather(Canvas canvas, float cx, float cy, float rx, float ry,
