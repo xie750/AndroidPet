@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from feiwu_bridge.assistant import AssistantService
+from feiwu_bridge.assistant import PERSONA_PROMPT, SYSTEM_PROMPT, AssistantService
 from feiwu_bridge.schemas import AssistantRequest
 
 
@@ -29,7 +29,15 @@ async def test_returns_natural_reply_and_includes_history() -> None:
     result = await service.answer(request)
 
     assert result.reply == "北京今天可能较冷。"
+    assert provider.calls[0][0] == {"role": "system", "content": SYSTEM_PROMPT}
     assert provider.calls[0][1]["content"] == "上海天气怎么样？"
+
+
+def test_system_prompt_includes_emo_empathic_persona() -> None:
+    assert PERSONA_PROMPT in SYSTEM_PROMPT
+    assert "克制的 emo 气质" in SYSTEM_PROMPT
+    assert "先接住情绪，再回应事情本身" in SYSTEM_PROMPT
+    assert "不要强行把话题变消沉" in SYSTEM_PROMPT
 
 
 @pytest.mark.asyncio

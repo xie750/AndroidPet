@@ -79,3 +79,9 @@ uv run ruff check .
 
 测试使用模拟 HTTP，不消耗第三方额度，也不会读取真实 API Key。
 
+## 调整桌宠人格
+
+桌宠的人格定义在 `src/feiwu_bridge/assistant.py` 的 `PERSONA_PROMPT` 中。中转服务会把它作为
+system 消息放在每次对话的最前面，再附加最近的对话历史和本次用户输入。修改人格后需要重启
+中转服务，安卓端无需重新打包。
+

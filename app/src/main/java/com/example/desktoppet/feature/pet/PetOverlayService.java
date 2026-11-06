@@ -16,15 +16,19 @@ import android.os.Looper;
 import android.provider.Settings;
 import android.util.Log;
 import android.view.Gravity;
+import android.view.View;
 import android.view.WindowManager;
 
 import com.example.desktoppet.R;
 import com.example.desktoppet.feature.music.MusicNotificationListener;
+import com.example.desktoppet.feature.starfield.prototype.StarfieldPrototypeActivity;
 import com.example.desktoppet.ui.MainActivity;
 
 public class PetOverlayService extends Service {
     public static final String ACTION_STOP = "com.example.desktoppet.STOP_PET";
     public static final String ACTION_REFRESH_SKIN = "com.example.desktoppet.REFRESH_SKIN";
+    private static final String ACTION_DISABLE_MUSIC =
+            "com.example.desktoppet.DISABLE_MUSIC_COMPANION";
     private static final String ACTION_MUSIC_AUTOSTART =
             "com.example.desktoppet.MUSIC_AUTOSTART";
     private static final String EXTRA_MUSIC_PLAYING = "music_playing";
@@ -44,6 +48,7 @@ public class PetOverlayService extends Service {
     private boolean musicActive;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private static volatile PetOverlayService runningInstance;
+    private static volatile boolean overlaySuppressed;
     private final Runnable musicAutoStop = () -> {
         if (musicAutoStarted && !musicActive) {
             Log.i(TAG, "auto music overlay stopped");
@@ -62,12 +67,23 @@ public class PetOverlayService extends Service {
         } else {
             startForeground(FOREGROUND_ID, notification);
         }
-        if (Settings.canDrawOverlays(this)) showPet();
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent != null && ACTION_STOP.equals(intent.getAction())) {
+            stopSelf();
+            return START_NOT_STICKY;
+        }
+        if (intent != null && ACTION_DISABLE_MUSIC.equals(intent.getAction())) {
+            getSharedPreferences("pet_settings", MODE_PRIVATE).edit()
+                    .putBoolean("music_companion_enabled", false).apply();
+            stopSelf();
+            return START_NOT_STICKY;
+        }
+        if (intent != null && ACTION_MUSIC_AUTOSTART.equals(intent.getAction())
+                && !getSharedPreferences("pet_settings", MODE_PRIVATE)
+                .getBoolean("music_companion_enabled", true)) {
             stopSelf();
             return START_NOT_STICKY;
         }
@@ -94,6 +110,7 @@ public class PetOverlayService extends Service {
             try { windowManager.removeView(petView); } catch (RuntimeException ignored) {}
         }
         petView = null;
+        stopForeground(STOP_FOREGROUND_REMOVE);
         if (runningInstance == this) runningInstance = null;
         super.onDestroy();
     }
@@ -130,6 +147,7 @@ public class PetOverlayService extends Service {
         }, this::setMusicLayout, this::showQuickActions);
         try {
             windowManager.addView(petView, params);
+            petView.setVisibility(overlaySuppressed ? View.INVISIBLE : View.VISIBLE);
             MusicNotificationListener.syncCurrentState(this);
         } catch (RuntimeException exception) {
             stopSelf();
@@ -169,9 +187,10 @@ public class PetOverlayService extends Service {
         quickActionMenu = new QuickActionMenuView(this, anchorX, anchorY, petRadius,
                 new QuickActionMenuView.Listener() {
                     @Override
-                    public void onActionSelected(QuickActionMenuView.Action action) {
+                    public void onActionSelected(QuickActionMenuView.Action action,
+                                                 float localX, float localY) {
                         dismissQuickActions();
-                        openQuickAction(action);
+                        openQuickAction(action, menuX + localX, menuY + localY);
                     }
 
                     @Override
@@ -205,7 +224,18 @@ public class PetOverlayService extends Service {
         try { windowManager.removeView(menu); } catch (RuntimeException ignored) {}
     }
 
-    private void openQuickAction(QuickActionMenuView.Action action) {
+    private void openQuickAction(QuickActionMenuView.Action action,
+                                 float originX, float originY) {
+        if (action == QuickActionMenuView.Action.STARFIELD) {
+            Intent starfield = new Intent(this, StarfieldPrototypeActivity.class)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            try {
+                startActivity(starfield);
+            } catch (RuntimeException exception) {
+                Log.w(TAG, "starfield launch rejected", exception);
+            }
+            return;
+        }
         Intent intent = new Intent(this, MainActivity.class)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
         switch (action) {
@@ -218,11 +248,29 @@ public class PetOverlayService extends Service {
             case TODAY:
                 intent.putExtra(MainActivity.EXTRA_OPEN_PAGE, 0);
                 break;
+            case STARFIELD:
+                return;
             case SETTINGS:
                 intent.putExtra(MainActivity.EXTRA_OPEN_PAGE, 3);
                 break;
         }
         startActivity(intent);
+    }
+
+    public static void setOverlaySuppressed(boolean suppressed) {
+        overlaySuppressed = suppressed;
+        PetOverlayService service = runningInstance;
+        if (service != null) {
+            service.mainHandler.post(() -> service.setOverlaySuppressedInternal(suppressed));
+        }
+    }
+
+    private void setOverlaySuppressedInternal(boolean suppressed) {
+        overlaySuppressed = suppressed;
+        if (suppressed) dismissQuickActions();
+        if (petView != null) {
+            petView.setVisibility(suppressed ? View.INVISIBLE : View.VISIBLE);
+        }
     }
 
     private void resizeWindow(boolean expanded) {
@@ -272,12 +320,15 @@ public class PetOverlayService extends Service {
 
     public static void handleMusicPlayback(Context context, boolean playing, boolean paused,
                                            String title, String artist) {
+        if (context == null || !context.getSharedPreferences("pet_settings", Context.MODE_PRIVATE)
+                .getBoolean("music_companion_enabled", true)) return;
         PetOverlayService service = runningInstance;
         if (service != null) {
+            if (playing) service.musicAutoStarted = true;
             service.applyMusicPlayback(playing, paused, title, artist);
             return;
         }
-        if (!playing || context == null || !Settings.canDrawOverlays(context)) return;
+        if (!playing || !Settings.canDrawOverlays(context)) return;
         Intent intent = new Intent(context, PetOverlayService.class)
                 .setAction(ACTION_MUSIC_AUTOSTART)
                 .putExtra(EXTRA_MUSIC_PLAYING, true)
@@ -314,6 +365,22 @@ public class PetOverlayService extends Service {
         return runningInstance != null;
     }
 
+    public static void forceStop(Context context) {
+        PetOverlayService service = runningInstance;
+        if (service != null) {
+            service.mainHandler.post(() -> {
+                service.musicActive = false;
+                service.mainHandler.removeCallbacks(service.musicAutoStop);
+                service.stopSelf();
+            });
+        }
+        if (context != null) {
+            try {
+                context.stopService(new Intent(context, PetOverlayService.class));
+            } catch (RuntimeException ignored) {}
+        }
+    }
+
     private Notification createNotification() {
         Intent open = new Intent(this, MainActivity.class);
         PendingIntent openPi = PendingIntent.getActivity(
@@ -321,12 +388,19 @@ public class PetOverlayService extends Service {
         Intent stop = new Intent(this, PetOverlayService.class).setAction(ACTION_STOP);
         PendingIntent stopPi = PendingIntent.getService(
                 this, 2, stop, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        Intent disableMusic = new Intent(this, PetOverlayService.class)
+                .setAction(ACTION_DISABLE_MUSIC);
+        PendingIntent disableMusicPi = PendingIntent.getService(
+                this, 3, disableMusic,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         return new Notification.Builder(this, CHANNEL_ID)
                 .setSmallIcon(R.drawable.ic_pet_notification)
                 .setContentTitle("费雾正在陪你")
                 .setContentText("点宠物互动，长按打开快捷气泡")
                 .setContentIntent(openPi)
                 .addAction(new Notification.Action.Builder(null, "停止桌宠", stopPi).build())
+                .addAction(new Notification.Action.Builder(
+                        null, "关闭自动唱盘", disableMusicPi).build())
                 .setOngoing(true)
                 .setCategory(Notification.CATEGORY_SERVICE)
                 .build();

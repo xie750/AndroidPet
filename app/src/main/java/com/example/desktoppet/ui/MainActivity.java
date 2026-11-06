@@ -600,16 +600,16 @@ public class MainActivity extends Activity {
         layout.addView(space(10));
 
         CheckBox enabled = new CheckBox(this);
-        enabled.setText("仅在播放音乐时自动显示");
+        enabled.setText("音乐自动唱盘总开关");
         enabled.setTextColor(TEXT);
         enabled.setButtonTintList(new ColorStateList(
                 new int[][]{new int[]{android.R.attr.state_checked}, new int[]{}},
                 new int[]{CYAN, TEXT_MUTED}));
         enabled.setChecked(prefs.getBoolean("music_companion_enabled", true));
         enabled.setOnCheckedChangeListener((buttonView, checked) -> {
-            prefs.edit().putBoolean("music_companion_enabled", checked).apply();
-            if (checked) MusicNotificationListener.syncCurrentState(this);
-            else PetOverlayService.setMusicPlayback(false, false, "", "");
+            MusicNotificationListener.setCompanionEnabled(this, checked);
+            toast(checked ? "自动唱盘已开启，只响应音乐应用"
+                    : "自动唱盘已关闭，悬浮桌宠已立即移除");
         });
         layout.addView(enabled);
 
@@ -778,6 +778,12 @@ public class MainActivity extends Activity {
     }
 
     private void togglePet() {
+        if (PetOverlayService.isRunning()) {
+            MusicNotificationListener.setCompanionEnabled(this, false);
+            petToggleButton.setText("开启桌宠");
+            toast("桌宠和自动唱盘都已关闭");
+            return;
+        }
         if (!Settings.canDrawOverlays(this)) {
             Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
                     Uri.parse("package:" + getPackageName()));
@@ -992,7 +998,8 @@ public class MainActivity extends Activity {
                 microphone ? "已允许" : "未允许",
                 music ? "已允许" : "未允许",
                 isXiaomi() ? "\n已识别为红米/小米设备，将提供专用后台设置入口。" : ""));
-        if (overlay) petToggleButton.setText("开启 / 重新显示桌宠");
+        if (overlay) petToggleButton.setText(PetOverlayService.isRunning()
+                ? "关闭桌宠及自动唱盘" : "开启桌宠");
     }
 
     private void requestNotificationPermission() {

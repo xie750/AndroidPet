@@ -3,6 +3,9 @@ package com.example.desktoppet.feature.music;
 import android.app.Notification;
 import android.content.ComponentName;
 import android.content.Context;
+import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageManager;
+import android.media.AudioManager;
 import android.media.MediaMetadata;
 import android.media.session.MediaController;
 import android.media.session.MediaSessionManager;
@@ -16,12 +19,15 @@ import android.util.Log;
 import com.example.desktoppet.feature.pet.PetOverlayService;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * Observes the system media sessions after the user grants notification access.
@@ -32,14 +38,34 @@ public final class MusicNotificationListener extends NotificationListenerService
     private static final int STATE_STOPPED = 0;
     private static final int STATE_PAUSED = 1;
     private static final int STATE_PLAYING = 2;
+    private static final Set<String> KNOWN_MUSIC_PACKAGES = new HashSet<>(Arrays.asList(
+            "com.luna.music",
+            "com.netease.cloudmusic",
+            "com.tencent.qqmusic",
+            "com.kugou.android",
+            "cn.kuwo.player",
+            "com.spotify.music",
+            "com.google.android.apps.youtube.music",
+            "com.apple.android.music",
+            "com.miui.player",
+            "com.android.mediacenter"
+    ));
+    private static final String[] NON_MUSIC_PACKAGE_MARKERS = {
+            "video", "qqlive", "youku", "iqiyi", "bilibili", "danmaku",
+            "douyin", "aweme", "kuaishou", "gifmaker", "browser", "chrome",
+            "game", "player.tv", "tvplayer"
+    };
 
     private static volatile Snapshot latest = new Snapshot(STATE_STOPPED, "", "");
+    private static volatile MusicNotificationListener connectedInstance;
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final List<MediaController> controllers = new ArrayList<>();
     private final Map<String, Integer> notificationPlaybackHints = new HashMap<>();
+    private final Set<String> activeMusicNotifications = new HashSet<>();
     private MediaSessionManager sessionManager;
     private ComponentName listenerComponent;
+    private final Runnable playbackWatchdog = this::publishBestSession;
 
     private final MediaController.Callback controllerCallback = new MediaController.Callback() {
         @Override
@@ -64,6 +90,7 @@ public final class MusicNotificationListener extends NotificationListenerService
     @Override
     public void onListenerConnected() {
         super.onListenerConnected();
+        connectedInstance = this;
         Log.i(TAG, "notification listener connected");
         sessionManager = (MediaSessionManager) getSystemService(Context.MEDIA_SESSION_SERVICE);
         listenerComponent = new ComponentName(this, MusicNotificationListener.class);
@@ -82,12 +109,14 @@ public final class MusicNotificationListener extends NotificationListenerService
     public void onListenerDisconnected() {
         clearControllers();
         notificationPlaybackHints.clear();
+        activeMusicNotifications.clear();
         if (sessionManager != null) {
             try {
                 sessionManager.removeOnActiveSessionsChangedListener(sessionsChangedListener);
             } catch (RuntimeException ignored) {}
         }
         publish(new Snapshot(STATE_STOPPED, "", ""));
+        if (connectedInstance == this) connectedInstance = null;
         super.onListenerDisconnected();
         requestSystemRebind(this);
     }
@@ -100,12 +129,16 @@ public final class MusicNotificationListener extends NotificationListenerService
 
     @Override
     public void onNotificationRemoved(StatusBarNotification sbn) {
-        if (sbn != null) notificationPlaybackHints.remove(sbn.getPackageName());
+        if (sbn != null) {
+            notificationPlaybackHints.remove(sbn.getPackageName());
+            activeMusicNotifications.remove(sbn.getPackageName());
+        }
         publishBestSession();
     }
 
     private void refreshNotificationHints() {
         notificationPlaybackHints.clear();
+        activeMusicNotifications.clear();
         try {
             StatusBarNotification[] active = getActiveNotifications();
             if (active == null) return;
@@ -115,10 +148,26 @@ public final class MusicNotificationListener extends NotificationListenerService
 
     private void updateNotificationHint(StatusBarNotification sbn) {
         if (sbn == null || sbn.getNotification() == null) return;
+        String packageName = sbn.getPackageName();
+        if (!isMusicPackage(packageName, null) || !isTransportNotification(sbn.getNotification())) {
+            notificationPlaybackHints.remove(packageName);
+            activeMusicNotifications.remove(packageName);
+            return;
+        }
+        activeMusicNotifications.add(packageName);
         int state = transportStateFromNotification(sbn.getNotification());
-        if (state == STATE_STOPPED) return;
-        notificationPlaybackHints.put(sbn.getPackageName(), state);
-        Log.d(TAG, "transport hint package=" + sbn.getPackageName() + " state=" + state);
+        if (state == STATE_STOPPED) {
+            notificationPlaybackHints.remove(packageName);
+            return;
+        }
+        notificationPlaybackHints.put(packageName, state);
+        Log.d(TAG, "music transport package=" + packageName + " state=" + state);
+    }
+
+    private boolean isTransportNotification(Notification notification) {
+        return Notification.CATEGORY_TRANSPORT.equals(notification.category)
+                || (notification.extras != null
+                && notification.extras.getParcelable(Notification.EXTRA_MEDIA_SESSION) != null);
     }
 
     /**
@@ -127,10 +176,9 @@ public final class MusicNotificationListener extends NotificationListenerService
      * Pause action means playback is active, while a Play action means it is paused.
      */
     private int transportStateFromNotification(Notification notification) {
-        boolean transport = Notification.CATEGORY_TRANSPORT.equals(notification.category)
-                || (notification.extras != null
-                && notification.extras.getParcelable(Notification.EXTRA_MEDIA_SESSION) != null);
-        if (!transport || notification.actions == null) return STATE_STOPPED;
+        if (!isTransportNotification(notification) || notification.actions == null) {
+            return STATE_STOPPED;
+        }
         for (Notification.Action action : notification.actions) {
             if (action == null) continue;
             String title = action.title == null ? ""
@@ -174,22 +222,31 @@ public final class MusicNotificationListener extends NotificationListenerService
     }
 
     private void publishBestSession() {
+        mainHandler.removeCallbacks(playbackWatchdog);
         MediaController pausedCandidate = null;
         for (MediaController controller : controllers) {
+            if (!isMusicController(controller)) continue;
             PlaybackState playbackState = controller.getPlaybackState();
             if (playbackState == null) continue;
+            int notificationState = notificationPlaybackHints.getOrDefault(
+                    controller.getPackageName(), STATE_STOPPED);
+            // The transport button is more reliable than several vendor players' stale session
+            // state. A Play button means the music app is paused even if its session says PLAYING.
+            if (notificationState == STATE_PLAYING) {
+                publishAudibleOrStopped(controller);
+                return;
+            }
+            if (notificationState == STATE_PAUSED) {
+                if (pausedCandidate == null) pausedCandidate = controller;
+                continue;
+            }
             int state = playbackState.getState();
             if (state == PlaybackState.STATE_PLAYING ||
                     state == PlaybackState.STATE_BUFFERING ||
                     state == PlaybackState.STATE_CONNECTING ||
                     state == PlaybackState.STATE_FAST_FORWARDING ||
                     state == PlaybackState.STATE_REWINDING) {
-                publish(snapshotOf(controller, STATE_PLAYING));
-                return;
-            }
-            if (notificationPlaybackHints.getOrDefault(controller.getPackageName(), STATE_STOPPED)
-                    == STATE_PLAYING) {
-                publish(snapshotOf(controller, STATE_PLAYING));
+                publishAudibleOrStopped(controller);
                 return;
             }
             if (state == PlaybackState.STATE_PAUSED && pausedCandidate == null) {
@@ -199,6 +256,43 @@ public final class MusicNotificationListener extends NotificationListenerService
         publish(pausedCandidate == null
                 ? new Snapshot(STATE_STOPPED, "", "")
                 : snapshotOf(pausedCandidate, STATE_PAUSED));
+    }
+
+    private void publishAudibleOrStopped(MediaController controller) {
+        AudioManager audioManager = (AudioManager) getSystemService(AUDIO_SERVICE);
+        boolean audible = audioManager != null && audioManager.isMusicActive();
+        publish(audible
+                ? snapshotOf(controller, STATE_PLAYING)
+                : new Snapshot(STATE_STOPPED, "", ""));
+        mainHandler.postDelayed(playbackWatchdog, audible ? 1500L : 400L);
+    }
+
+    private boolean isMusicController(MediaController controller) {
+        if (controller == null) return false;
+        String packageName = controller.getPackageName();
+        if (!activeMusicNotifications.contains(packageName)) return false;
+        return isMusicPackage(packageName, controller.getMetadata());
+    }
+
+    private boolean isMusicPackage(String packageName, MediaMetadata metadata) {
+        if (packageName == null || packageName.isEmpty()) return false;
+        if (KNOWN_MUSIC_PACKAGES.contains(packageName)) return true;
+        String normalized = packageName.toLowerCase(Locale.ROOT);
+        for (String marker : NON_MUSIC_PACKAGE_MARKERS) {
+            if (normalized.contains(marker)) return false;
+        }
+        try {
+            ApplicationInfo info = getPackageManager().getApplicationInfo(packageName, 0);
+            if (info.category == ApplicationInfo.CATEGORY_AUDIO) return true;
+            if (info.category == ApplicationInfo.CATEGORY_VIDEO
+                    || info.category == ApplicationInfo.CATEGORY_GAME) return false;
+        } catch (PackageManager.NameNotFoundException ignored) {}
+        String artist = metadataText(metadata, MediaMetadata.METADATA_KEY_ARTIST);
+        if (artist.isEmpty()) {
+            artist = metadataText(metadata, MediaMetadata.METADATA_KEY_ALBUM_ARTIST);
+        }
+        String album = metadataText(metadata, MediaMetadata.METADATA_KEY_ALBUM);
+        return !artist.isEmpty() && !album.isEmpty();
     }
 
     private Snapshot snapshotOf(MediaController controller, int state) {
@@ -217,16 +311,16 @@ public final class MusicNotificationListener extends NotificationListenerService
     }
 
     private void publish(Snapshot snapshot) {
+        boolean enabled = getSharedPreferences("pet_settings", MODE_PRIVATE)
+                .getBoolean("music_companion_enabled", true);
+        if (!enabled) {
+            latest = new Snapshot(STATE_STOPPED, "", "");
+            return;
+        }
         Snapshot previous = latest;
         latest = snapshot;
         if (previous.equals(snapshot)) return;
         Log.d(TAG, "publish state=" + snapshot.state);
-        boolean enabled = getSharedPreferences("pet_settings", MODE_PRIVATE)
-                .getBoolean("music_companion_enabled", true);
-        if (!enabled) {
-            PetOverlayService.handleMusicPlayback(this, false, false, "", "");
-            return;
-        }
         PetOverlayService.handleMusicPlayback(
                 this,
                 snapshot.state == STATE_PLAYING,
@@ -248,6 +342,25 @@ public final class MusicNotificationListener extends NotificationListenerService
         if (!enabled || snapshot.state != STATE_PLAYING) return;
         PetOverlayService.handleMusicPlayback(
                 context, true, false, snapshot.title, snapshot.artist);
+    }
+
+    public static void setCompanionEnabled(Context context, boolean enabled) {
+        if (context == null) return;
+        context.getSharedPreferences("pet_settings", Context.MODE_PRIVATE).edit()
+                .putBoolean("music_companion_enabled", enabled).apply();
+        if (!enabled) {
+            latest = new Snapshot(STATE_STOPPED, "", "");
+            PetOverlayService.forceStop(context);
+            return;
+        }
+        requestSystemRebind(context);
+        MusicNotificationListener listener = connectedInstance;
+        if (listener != null) {
+            listener.mainHandler.post(() -> {
+                listener.refreshNotificationHints();
+                listener.refreshSessions();
+            });
+        }
     }
 
     /**

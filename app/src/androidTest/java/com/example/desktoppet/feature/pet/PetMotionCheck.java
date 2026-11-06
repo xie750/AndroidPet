@@ -9,6 +9,7 @@ import android.graphics.Canvas;
 import android.os.Bundle;
 import android.os.SystemClock;
 import android.view.MotionEvent;
+import com.example.desktoppet.feature.music.MusicNotificationListener;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.lang.reflect.Field;
@@ -111,6 +112,18 @@ public final class PetMotionCheck extends Instrumentation {
                     Math.abs(centerOffsetX) > 8f || Math.abs(centerOffsetY) > 8f) {
                 throw new AssertionError("Music stage drag lost pointer anchor");
             }
+            runOnMainSync(() -> MusicNotificationListener.setCompanionEnabled(context, false));
+            Object remainingService = instance.get(null);
+            for (int i = 0; i < 30 && remainingService != null; i++) {
+                SystemClock.sleep(50);
+                remainingService = instance.get(null);
+            }
+            if (remainingService != null) {
+                throw new AssertionError("Music master switch failed to remove overlay service");
+            }
+            context.getSharedPreferences("pet_settings", Context.MODE_PRIVATE).edit()
+                    .putBoolean("music_companion_enabled", true).apply();
+            MusicNotificationListener.requestSystemRebind(context);
             result.putString("positions",before[0]+" -> "+dragged[0]+" -> "+settled[0]+" -> "+resting[0]);
             result.putString("musicSnapshot", snapshot.getAbsolutePath());
             finish(Activity.RESULT_OK,result);
